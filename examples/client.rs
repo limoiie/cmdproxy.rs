@@ -61,10 +61,13 @@ async fn main() {
         .await
         .unwrap()
         .database(&mongodb_name)
-        .bucket_(None);
+        .clone()
+        .bucket(None);
 
     // prepare the fake cloud input
-    let faker = gridfs::TempFileFaker::with(Text, bucket.clone(), None, true);
+    let faker = gridfs::TempFileFaker::with_bucket(bucket.clone())
+        .kind(Text)
+        .include_content(true);
     let fake_input = faker.fake::<gridfs::TempFile>();
 
     let input_link = fake_input.filename.unwrap();

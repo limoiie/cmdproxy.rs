@@ -1,0 +1,18 @@
+# This docker-compose.yml file is used for the tests.
+# It deploys an empty mongodb and a redis.
+
+version: '3'
+services:
+  db:
+    image: mongo:latest
+    container_name: test-cmd-proxy-db
+    ports:
+      - "0:27017"
+    environment:
+      - MONGO_INITDB_DATABASE=testdb
+
+  broker:
+    image: redis:latest
+    container_name: test-cmd-proxy-broker
+    ports:
+      - "0:6379"

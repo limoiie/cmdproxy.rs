@@ -85,7 +85,8 @@ pub async fn app(cli: Cli) -> Result<()> {
                 .map(|name| CLIENT.get().unwrap().database(&name))
                 .or_else(|| CLIENT.get().unwrap().default_database())
                 .expect("Failed to connect to default Mongodb Database")
-                .bucket_(None),
+                .clone()
+                .bucket(None),
         )
         .unwrap();
 

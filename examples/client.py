@@ -16,8 +16,8 @@ _faker = faker.Faker()
 class RunRequest:
     command: str
     args: list[str]
-    to_downloads: Optional[list[(str, str)]]
-    to_uploads: Optional[list[str, str]]
+    to_downloads: Optional[list[tuple[str, str]]]
+    to_uploads: Optional[list[tuple[str, str]]]
     stdout: Optional[str]
     stderr: Optional[str]
 
@@ -31,7 +31,7 @@ def main(redis_url: str = "redis://localhost:6379/",
 
     gridfs = GridFS(MongoClient(mongo_url).get_database(mongodb_name))
 
-    app = Celery('Bin2DataDaemon', broker=redis_url)
+    app = Celery('Bin2DataDaemon', broker=redis_url, backend=redis_url)
 
     @app.task(name='run')
     def run(run_request: str):

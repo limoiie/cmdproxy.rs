@@ -216,7 +216,8 @@ mod tests {
             .await
             .unwrap()
             .database("testdb")
-            .bucket_(None);
+            .clone()
+            .bucket(None);
 
         let ctx = RunContext::new(req, bucket).await;
 
@@ -238,7 +239,8 @@ mod tests {
             .await
             .unwrap()
             .database("testdb")
-            .bucket_(None);
+            .clone()
+            .bucket(None);
         let (_oid, link1, random_doc1) = prepare_cloud_file(&mut bucket).await;
         let (_oid, link2, random_doc2) = prepare_cloud_file(&mut bucket).await;
 
@@ -303,7 +305,8 @@ mod tests {
             .await
             .unwrap()
             .database("testdb")
-            .bucket_(None);
+            .clone()
+            .bucket(None);
         let (oid1, link1, random_doc1) = prepare_cloud_file(&mut bucket).await;
         let (oid2, link2, random_doc2) = prepare_cloud_file(&mut bucket).await;
 
@@ -374,7 +377,8 @@ mod tests {
             .await
             .unwrap()
             .database("testdb")
-            .bucket_(None);
+            .clone()
+            .bucket(None);
         let (_oid, link1, random_doc1) = prepare_cloud_file(&mut bucket).await;
         let (oid2, link2, random_doc2) = prepare_cloud_file(&mut bucket).await;
 
@@ -446,7 +450,9 @@ mod tests {
     }
 
     async fn prepare_cloud_file(bucket: &mut GridFSBucket) -> (ObjectId, String, Vec<u8>) {
-        let faker = gridfs::TempFileFaker::with(fs::TempFileKind::Text, bucket.clone(), None, true);
+        let faker = gridfs::TempFileFaker::with_bucket(bucket.clone())
+            .kind(fs::TempFileKind::Text)
+            .include_content(true);
         let temp_file = faker.fake::<gridfs::TempFile>();
 
         (
