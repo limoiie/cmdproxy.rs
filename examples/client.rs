@@ -49,8 +49,9 @@ async fn main() {
     println!("mongo run on: {}", mongo_url);
     println!("mongo dbname: {}", mongodb_name);
 
-    let app: Arc<Celery<_>> = celery::app!(
-        broker = RedisBroker { redis_url },
+    let app: Arc<Celery<RedisBroker, RedisBackend>> = celery::app!(
+        broker = RedisBroker { redis_url.clone() },
+        backend = RedisBackend { redis_url.clone() },
         tasks = [run],
         task_routes = ["*" => "celery"],
     )

@@ -7,7 +7,7 @@ services:
     image: mongo:latest
     container_name: test-cmd-proxy-db
     ports:
-      - "0:27017"
+      - "27017:27017"
     environment:
       - MONGO_INITDB_DATABASE=testdb
 
@@ -15,4 +15,4 @@ services:
     image: redis:latest
     container_name: test-cmd-proxy-broker
     ports:
-      - "0:6379"
+      - "6379:6379"

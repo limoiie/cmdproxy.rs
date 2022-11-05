@@ -51,9 +51,9 @@ def main(redis_url: str = "redis://localhost:6379/",
     serialized_req = json.dumps(dataclasses.asdict(req), separators=(',', ':'))
 
     run: Task
-    run.apply_async(args=(serialized_req,), queue='sh')
+    ret_value = run.apply_async(args=(serialized_req,), queue='sh').wait()
 
-    input('press enter to continue')
+    print(f'receive returns: {ret_value}')
 
     print('checking normal output')
     output_content = __read_cloud_file(gridfs, output_link)
