@@ -1,3 +1,4 @@
+use celery::error::TaskError::UnexpectedError;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -20,21 +21,26 @@ pub static COMMANDS_MAP: OnceCell<HashMap<String, PathBuf>> = OnceCell::new();
 
 #[celery::task]
 pub async fn run(serialized_run_request: String) -> TaskResult<i32> {
-    let run_request =
-        serde_json::from_str::<RunRequest>(&serialized_run_request).unwrap_or_else(|err| {
-            log::error!("Failed to deserialize request: {}", serialized_run_request);
-            panic!("Failed due to {}", err)
-        });
+    let run_request = serde_json::from_str::<RunRequest>(&serialized_run_request)
+        .with_unexpected_err(|| {
+            format!("Failed to deserialize Request {}", serialized_run_request)
+        })?;
 
     let program_path = COMMANDS_MAP
         .get()
         .unwrap()
         .get(&run_request.command)
-        .expect(format!("Missing command {}", run_request.command).as_str());
+        .ok_or_else(|| {
+            let valid_commands = COMMANDS_MAP.get().unwrap().keys().collect::<Vec<_>>();
+            UnexpectedError(format!(
+                "Failed to get path for command {},\n  valid commands include: {:#?}",
+                run_request.command, valid_commands
+            ))
+        })?;
 
     RunContext::new(run_request, BUCKET.get().unwrap().clone())
         .await
         .call(program_path)
         .map(|es| es.code().unwrap())
-        .with_unexpected_err(|| "")
+        .with_unexpected_err(|| format!("Failed to run the command at {:#?}", program_path))
 }
