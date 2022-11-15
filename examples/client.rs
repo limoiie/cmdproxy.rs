@@ -10,7 +10,6 @@ use mongodb::Client;
 use mongodb_gridfs_ext::bucket::common::GridFSBucketExt;
 use test_utilities::fs::TempFileKind::Text;
 use test_utilities::gridfs;
-use tokio::io::AsyncReadExt;
 
 use cmd_proxy::run_request::RunRequest;
 use cmd_proxy::tasks::run;
@@ -94,10 +93,14 @@ async fn main() {
     let serialized_req = serde_json::to_string(&req).unwrap();
 
     let sig: Signature<_> = run::new(serialized_req).with_queue("sh");
-    app.send_task(sig.with_queue("sh")).await.unwrap();
+    let res = app
+        .send_task(sig.with_queue("sh"))
+        .await
+        .unwrap()
+        .wait(None)
+        .await;
 
-    println!("press enter to continue");
-    tokio::io::stdin().read_u8().await.unwrap_or(0);
+    println!("returns: {:?}", res);
 
     // read the cloud output from cloud
     println!("checking normal output...");

@@ -7,7 +7,7 @@ edition = "2021"
 
 [dependencies]
 anyhow = "1.0"
-celery = { git = "https://github.com/limoiie/rusty-celery", branch = "feat/backend", version = "0.4.0-rcn.12" }
+celery = { git = "https://github.com/limoiie/rusty-celery", branch = "feat/backend", version = "0.4.0-rcn.12.1" }
 chain_ext = { git = "https://github.com/limoiie/chain-ext.rs", version = "0.1.0" }
 clap = { version = "4.0.10", features = ["derive"] }
 directories = "4.0.1"

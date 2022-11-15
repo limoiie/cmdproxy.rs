@@ -104,8 +104,8 @@ pub async fn app(cli: Cli) -> Result<()> {
         .unwrap();
 
     let app = celery::app!(
-        broker = RedisBroker { REDIS_URI.get().unwrap().into() },
-        backend = RedisBackend { REDIS_URI.get().unwrap().into() },
+        broker = RedisBroker { REDIS_URI.get().unwrap() },
+        backend = RedisBackend { REDIS_URI.get().unwrap() },
         tasks = [run],
         task_routes = [
             // this bin will only run in server mode, hence no task needs to be routed
