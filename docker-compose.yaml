@@ -23,7 +23,7 @@ services:
     
   cmd-proxy:
     build: .
-    image: cmd-proxy:0.2.1
+    image: cmd-proxy:0.2.2
     container_name: cmd-proxy-server
     depends_on:
       - db
@@ -39,7 +39,7 @@ services:
     build:
       context: .
       dockerfile: ./examples/Dockerfile.client-py
-    image: cmd-proxy-example-client-py:0.2.1
+    image: cmd-proxy-example-client-py:0.2.2
     container_name: cmd-proxy-client
     depends_on:
       - db
@@ -56,7 +56,7 @@ services:
     build:
       context: .
       dockerfile: ./examples/Dockerfile.client-rs
-    image: cmd-proxy-example-client-py:0.2.1
+    image: cmd-proxy-example-client-py:0.2.2
     container_name: cmd-proxy-client
     depends_on:
       - db
