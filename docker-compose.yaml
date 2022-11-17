@@ -5,7 +5,9 @@ version: '3'
 services:
   db:
     image: mongo:latest
-    container_name: test-cmd-proxy-db
+    container_name: cmd-proxy-db
+    networks:
+      - overlay
     ports:
       - "27017:27017"
     environment:
@@ -13,6 +15,60 @@ services:
 
   broker:
     image: redis:latest
-    container_name: test-cmd-proxy-broker
+    container_name: cmd-proxy-broker
+    networks:
+      - overlay
     ports:
       - "6379:6379"
+    
+  cmd-proxy:
+    build: .
+    image: cmd-proxy:0.2.1
+    container_name: cmd-proxy-server
+    depends_on:
+      - db
+      - broker
+    networks:
+      - overlay
+    environment:
+      - MONGODB_NAME=testdb
+      - MONGO_URI=mongodb://db:27017
+      - REDIS_URI=redis://broker:6379
+
+  py-client:
+    build:
+      context: .
+      dockerfile: ./examples/Dockerfile.client-py
+    image: cmd-proxy-example-client-py:0.2.1
+    container_name: cmd-proxy-client
+    depends_on:
+      - db
+      - broker
+    networks:
+      - overlay
+    environment:
+      - MONGODB_NAME=testdb
+      - MONGO_URI=mongodb://db:27017
+      - REDIS_URI=redis://broker:6379
+    profiles: ["py-client"]
+
+  rs-client:
+    build:
+      context: .
+      dockerfile: ./examples/Dockerfile.client-rs
+    image: cmd-proxy-example-client-py:0.2.1
+    container_name: cmd-proxy-client
+    depends_on:
+      - db
+      - broker
+    networks:
+      - overlay
+    environment:
+      - MONGODB_NAME=testdb
+      - MONGO_URI=mongodb://db:27017
+      - REDIS_URI=redis://broker:6379
+    profiles: ["rs-client"]
+
+networks:
+  overlay:
+

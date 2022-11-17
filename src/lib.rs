@@ -82,6 +82,8 @@ pub async fn app(cli: Cli) -> Result<()> {
     BUCKET
         .set(
             cli.mongodb_name
+                .or_ok(std::env::var("MONGODB_NAME"))
+                .or_wrap("testdb".to_owned())
                 .map(|name| CLIENT.get().unwrap().database(&name))
                 .or_else(|| CLIENT.get().unwrap().default_database())
                 .expect("Failed to connect to default Mongodb Database")

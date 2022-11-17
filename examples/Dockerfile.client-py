@@ -1,0 +1,9 @@
+FROM python:3.9
+
+WORKDIR /home/projects/cmd-proxy
+
+COPY ./examples examples
+
+RUN pip install --no-cache-dir -r ./examples/requirements.txt 
+
+CMD ["python", "./examples/client.py"]

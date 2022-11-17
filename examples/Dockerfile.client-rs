@@ -12,9 +12,9 @@ RUN cargo build
 RUN cargo clean -p cmd-proxy
 
 COPY ./src src
-
-RUN cargo install --locked --path .
-
 COPY ./examples examples
 
-CMD ["cmd-proxy", "--command-palette-path=./examples/commands-palette.yaml"]
+RUN cargo build --example client
+
+# todo: prepare envs REDIS_URI, MONGO_URI
+CMD ["cargo", "run", "--example", "client"]

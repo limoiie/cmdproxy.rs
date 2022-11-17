@@ -1,5 +1,6 @@
 import dataclasses
 import json
+import os
 from typing import Optional
 
 import faker
@@ -22,9 +23,11 @@ class RunRequest:
     stderr: Optional[str]
 
 
-def main(redis_url: str = "redis://localhost:6379/",
-         mongo_url: str = "mongodb://localhost:27017/",
-         mongodb_name: str = "testdb"):
+def main(redis_url=None, mongo_url=None, mongodb_name=None):
+    redis_url = redis_url or os.getenv('REDIS_URI') or 'redis://localhost:6379'
+    mongo_url = mongo_url or os.getenv('MONGO_URI') or 'mongodb://localhost:27017'
+    mongodb_name = mongodb_name or os.getenv('MONGODB_NAME') or 'testdb'
+
     print(f'redis run on: {redis_url}')
     print(f'mongo run on: {mongo_url}')
     print(f'mongo dbname: {mongodb_name}')

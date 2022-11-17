@@ -4,6 +4,7 @@ use celery::prelude::*;
 use celery::task::Signature;
 use celery::Celery;
 use chain_ext::mongodb_gridfs::DatabaseExt;
+use chain_ext::option::OptionExt;
 use clap::Parser;
 use fake::Fake;
 use mongodb::Client;
@@ -36,13 +37,21 @@ async fn main() {
 
     let redis_url = cli
         .redis_url
-        .unwrap_or("redis://localhost:6379/".to_owned());
+        .or_ok(std::env::var("REDIS_URI"))
+        .or_wrap("redis://localhost:6379/".to_owned())
+        .unwrap();
 
     let mongo_url = cli
         .mongo_url
-        .unwrap_or("mongodb://localhost:27017/".to_owned());
+        .or_ok(std::env::var("MONGO_URI"))
+        .or_wrap("mongodb://localhost:27017/".to_owned())
+        .unwrap();
 
-    let mongodb_name = cli.mongodb_name.unwrap_or("testdb".to_owned());
+    let mongodb_name = cli
+        .mongodb_name
+        .or_ok(std::env::var("MONGODB_NAME"))
+        .or_wrap("testdb".to_owned())
+        .unwrap();
 
     println!("redis run on: {}", redis_url);
     println!("mongo run on: {}", mongo_url);
