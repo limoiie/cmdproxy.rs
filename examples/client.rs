@@ -70,7 +70,6 @@ async fn main() {
         .await
         .unwrap()
         .database(&mongodb_name)
-        .clone()
         .bucket(None);
 
     // prepare the fake cloud input

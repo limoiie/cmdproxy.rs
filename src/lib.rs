@@ -87,7 +87,6 @@ pub async fn app(cli: Cli) -> Result<()> {
                 .map(|name| CLIENT.get().unwrap().database(&name))
                 .or_else(|| CLIENT.get().unwrap().default_database())
                 .expect("Failed to connect to default Mongodb Database")
-                .clone()
                 .bucket(None),
         )
         .unwrap();
@@ -96,7 +95,9 @@ pub async fn app(cli: Cli) -> Result<()> {
         .set(
             cli.command_palette_path
                 .or_ok(std::env::var("COMMANDS_PALETTE").map(PathBuf::from))
-                .or(UserDirs::new().map(|dirs| dirs.home_dir().join("commands-palette.yaml")))
+                .or_else(|| {
+                    UserDirs::new().map(|dirs| dirs.home_dir().join("commands-palette.yaml"))
+                })
                 .expect("Commands palette file not found")
                 .open()
                 .unwrap()

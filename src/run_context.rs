@@ -62,14 +62,14 @@ impl RunContext {
             stderr: stderr.as_ref().map(|(tp, _)| tp.to_path_buf()),
             downloaded: req
                 .to_downloads
-                .unwrap_or(vec![])
+                .unwrap_or_default()
                 .into_iter()
                 .map(|(local_path, uri)| (RunContext::resolve_relpath(local_path), uri))
                 .map(|(local_path, uri)| (TempPath::from_path(local_path), uri))
                 .collect(),
             to_uploads: req
                 .to_uploads
-                .unwrap_or(vec![])
+                .unwrap_or_default()
                 .into_iter()
                 .map(|(local_path, uri)| (RunContext::resolve_relpath(local_path), uri))
                 .map(|(local_path, uri)| (TempPath::from_path(local_path), uri))
@@ -84,7 +84,7 @@ impl RunContext {
         ctx.download().await.into_iter().for_each(|res| {
             res.unwrap();
         });
-        return ctx;
+        ctx
     }
 
     pub fn call(&self, program: &PathBuf) -> std::io::Result<ExitStatus> {
@@ -92,12 +92,12 @@ impl RunContext {
             .stdout
             .as_ref()
             .map(|path| Stdio::from(File::create(path).unwrap()))
-            .unwrap_or(Stdio::inherit());
+            .unwrap_or_else(Stdio::inherit);
         let stderr = self
             .stderr
             .as_ref()
             .map(|path| Stdio::from(File::create(path).unwrap()))
-            .unwrap_or(Stdio::inherit());
+            .unwrap_or_else(Stdio::inherit);
 
         let mut command = std::process::Command::new(program);
         let command = command.args(&self.args);
@@ -111,9 +111,9 @@ impl RunContext {
     }
 
     /// Parse cloud uris in forms of '<#:\[io\]></>', and bind each of them with a local temp path.
-    fn resolve_opt(&mut self, opt: &String) -> String {
+    fn resolve_opt(&mut self, opt: &str) -> String {
         LINK_REGEX
-            .replace_all(opt.as_str(), |caps: &Captures| {
+            .replace_all(opt, |caps: &Captures| {
                 let is_input = caps.get(1).unwrap().as_str() == "i";
                 let uri = caps.get(2).unwrap().as_str().to_string();
 
@@ -139,35 +139,27 @@ impl RunContext {
 
     /// Download cloud files to their binding local paths
     async fn download(&self) -> Vec<mongodb_gridfs_ext::error::Result<ObjectId>> {
-        futures::future::join_all(
-            (&self.downloaded)
-                .into_iter()
-                .map(|(local_path, uri)| async {
-                    let local_path = local_path.to_str().unwrap().to_string();
-                    let uri = uri.clone();
-                    debug!(
-                        "try downloading `{}' from cloud to local `{}'",
-                        uri, local_path
-                    );
-                    // download from the link to the local_path
-                    self.bucket.download_to(&uri, &local_path).await
-                }),
-        )
+        futures::future::join_all(self.downloaded.iter().map(|(local_path, uri)| async {
+            let local_path = local_path.to_str().unwrap().to_string();
+            let uri = uri.clone();
+            debug!(
+                "try downloading `{}' from cloud to local `{}'",
+                uri, local_path
+            );
+            // download from the link to the local_path
+            self.bucket.download_to(&uri, &local_path).await
+        }))
         .await
     }
 
     /// Upload local paths to their binding cloud uri
     async fn upload(&self) -> Vec<mongodb_gridfs_ext::error::Result<ObjectId>> {
-        futures::future::join_all(
-            (&self.to_uploads)
-                .into_iter()
-                .map(|(local_path, uri)| async {
-                    let mut bucket = self.bucket.clone();
-                    let local_path = local_path.to_str().unwrap().to_string();
-                    let uri = uri.clone();
-                    bucket.upload_from(&uri, &local_path).await
-                }),
-        )
+        futures::future::join_all(self.to_uploads.iter().map(|(local_path, uri)| async {
+            let mut bucket = self.bucket.clone();
+            let local_path = local_path.to_str().unwrap().to_string();
+            let uri = uri.clone();
+            bucket.upload_from(&uri, &local_path).await
+        }))
         .await
     }
 }
@@ -216,7 +208,6 @@ mod tests {
             .await
             .unwrap()
             .database("testdb")
-            .clone()
             .bucket(None);
 
         let ctx = RunContext::new(req, bucket).await;
@@ -239,7 +230,6 @@ mod tests {
             .await
             .unwrap()
             .database("testdb")
-            .clone()
             .bucket(None);
         let (_oid, link1, random_doc1) = prepare_cloud_file(&mut bucket).await;
         let (_oid, link2, random_doc2) = prepare_cloud_file(&mut bucket).await;
@@ -305,7 +295,6 @@ mod tests {
             .await
             .unwrap()
             .database("testdb")
-            .clone()
             .bucket(None);
         let (oid1, link1, random_doc1) = prepare_cloud_file(&mut bucket).await;
         let (oid2, link2, random_doc2) = prepare_cloud_file(&mut bucket).await;
@@ -377,7 +366,6 @@ mod tests {
             .await
             .unwrap()
             .database("testdb")
-            .clone()
             .bucket(None);
         let (_oid, link1, random_doc1) = prepare_cloud_file(&mut bucket).await;
         let (oid2, link2, random_doc2) = prepare_cloud_file(&mut bucket).await;
