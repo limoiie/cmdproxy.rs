@@ -1,6 +1,6 @@
 FROM rust:1.65
 
-WORKDIR /home/projects/cmd-proxy
+WORKDIR /home/projects/cmdproxy
 RUN cargo init
 
 COPY ./.cargo .cargo
@@ -9,7 +9,7 @@ COPY Cargo.toml ./
 COPY Cargo.lock ./
 
 RUN cargo build
-RUN cargo clean -p cmd-proxy
+RUN cargo clean -p cmdproxy
 
 COPY ./src src
 
@@ -17,4 +17,4 @@ RUN cargo install --locked --path .
 
 COPY ./examples examples
 
-CMD ["cmd-proxy", "--command-palette-path=./examples/commands-palette.yaml"]
+CMD ["cmdproxy", "--command-palette-path=./examples/commands-palette.yaml"]

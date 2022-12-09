@@ -8,8 +8,8 @@ use mongodb::{bson::doc, Client};
 use mongodb_gridfs::GridFSBucket;
 use once_cell::sync::OnceCell;
 
+use crate::protocol::RunRequest;
 use crate::run_context::RunContext;
-use crate::run_request::RunRequest;
 
 pub static REDIS_URI: OnceCell<String> = OnceCell::new();
 pub static MONGO_URI: OnceCell<String> = OnceCell::new();
@@ -17,7 +17,7 @@ pub static MONGO_URI: OnceCell<String> = OnceCell::new();
 pub static CLIENT: OnceCell<Client> = OnceCell::new();
 pub static BUCKET: OnceCell<GridFSBucket> = OnceCell::new();
 
-pub static COMMANDS_MAP: OnceCell<HashMap<String, PathBuf>> = OnceCell::new();
+pub static COMMANDS_PALETTE: OnceCell<HashMap<String, PathBuf>> = OnceCell::new();
 
 #[celery::task]
 pub async fn run(serialized_run_request: String) -> TaskResult<i32> {
@@ -26,12 +26,12 @@ pub async fn run(serialized_run_request: String) -> TaskResult<i32> {
             format!("Failed to deserialize Request {}", serialized_run_request)
         })?;
 
-    let program_path = COMMANDS_MAP
+    let program_path = COMMANDS_PALETTE
         .get()
         .unwrap()
         .get(&run_request.command)
         .ok_or_else(|| {
-            let valid_commands = COMMANDS_MAP.get().unwrap().keys().collect::<Vec<_>>();
+            let valid_commands = COMMANDS_PALETTE.get().unwrap().keys().collect::<Vec<_>>();
             UnexpectedError(format!(
                 "Failed to get path for command {},\n  valid commands include: {:#?}",
                 run_request.command, valid_commands

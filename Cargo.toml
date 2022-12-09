@@ -1,5 +1,5 @@
 [package]
-name = "cmd-proxy"
+name = "cmdproxy"
 version = "0.2.2"
 edition = "2021"
 

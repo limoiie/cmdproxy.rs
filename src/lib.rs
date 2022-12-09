@@ -12,10 +12,11 @@ use clap::Parser;
 use directories::UserDirs;
 use mongodb::Client;
 
-use crate::tasks::{run, BUCKET, CLIENT, COMMANDS_MAP, MONGO_URI, REDIS_URI};
+use crate::tasks::{run, BUCKET, CLIENT, COMMANDS_PALETTE, MONGO_URI, REDIS_URI};
 
+pub mod params;
+pub mod protocol;
 mod run_context;
-pub mod run_request;
 pub mod tasks;
 
 #[derive(Parser, Debug)]
@@ -91,7 +92,7 @@ pub async fn app(cli: Cli) -> Result<()> {
         )
         .unwrap();
 
-    COMMANDS_MAP
+    COMMANDS_PALETTE
         .set(
             cli.command_palette_path
                 .or_ok(std::env::var("COMMANDS_PALETTE").map(PathBuf::from))
@@ -117,7 +118,7 @@ pub async fn app(cli: Cli) -> Result<()> {
     )
     .await?;
 
-    let command_queues = COMMANDS_MAP
+    let command_queues = COMMANDS_PALETTE
         .get()
         .unwrap()
         .keys()

@@ -12,7 +12,7 @@ use mongodb_gridfs_ext::bucket::file_sync::FileSync;
 use regex::{Captures, Regex};
 use tempfile::{tempdir, NamedTempFile, TempDir, TempPath};
 
-use crate::run_request::RunRequest;
+use crate::protocol::RunRequest;
 
 lazy_static! {
     pub static ref LINK_REGEX: Regex = Regex::new(r"<#:([io])>(.+?)</>").unwrap();

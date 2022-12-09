@@ -5,7 +5,7 @@ version: '3'
 services:
   db:
     image: mongo:latest
-    container_name: cmd-proxy-db
+    container_name: cmdproxy-db
     networks:
       - overlay
     ports:
@@ -15,16 +15,16 @@ services:
 
   broker:
     image: redis:latest
-    container_name: cmd-proxy-broker
+    container_name: cmdproxy-broker
     networks:
       - overlay
     ports:
       - "6379:6379"
     
-  cmd-proxy:
+  cmdproxy:
     build: .
-    image: cmd-proxy:0.2.2
-    container_name: cmd-proxy-server
+    image: cmdproxy:0.2.2
+    container_name: cmdproxy-server
     depends_on:
       - db
       - broker
@@ -39,8 +39,8 @@ services:
     build:
       context: .
       dockerfile: ./examples/Dockerfile.client-py
-    image: cmd-proxy-example-client-py:0.2.2
-    container_name: cmd-proxy-client
+    image: cmdproxy-example-client-py:0.2.2
+    container_name: cmdproxy-client
     depends_on:
       - db
       - broker
@@ -56,8 +56,8 @@ services:
     build:
       context: .
       dockerfile: ./examples/Dockerfile.client-rs
-    image: cmd-proxy-example-client-py:0.2.2
-    container_name: cmd-proxy-client
+    image: cmdproxy-example-client-py:0.2.2
+    container_name: cmdproxy-client
     depends_on:
       - db
       - broker

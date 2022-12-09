@@ -12,8 +12,8 @@ use mongodb_gridfs_ext::bucket::common::GridFSBucketExt;
 use test_utilities::fs::TempFileKind::Text;
 use test_utilities::gridfs;
 
-use cmd_proxy::run_request::RunRequest;
-use cmd_proxy::tasks::run;
+use cmdproxy::protocol::RunRequest;
+use cmdproxy::tasks::run;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
