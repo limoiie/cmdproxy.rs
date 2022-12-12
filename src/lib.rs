@@ -1,9 +1,11 @@
 #![allow(non_upper_case_globals)]
 
+use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::Result;
 use celery::prelude::*;
+use chain_ext::io::DeExt;
 use chain_ext::option::OptionExt;
 use clap::Parser;
 use directories::UserDirs;
@@ -11,13 +13,12 @@ use directories::UserDirs;
 use crate::configs::{CmdProxyServerConf, CmdProxyServerConfFile};
 use crate::tasks::{run, SERVER_CONF};
 
-pub mod middles;
-pub mod params;
-pub mod protocol;
-// mod run_context;
 pub mod client;
 mod codegen;
 pub mod configs;
+pub mod middles;
+pub mod params;
+pub mod protocol;
 mod server;
 pub mod tasks;
 
@@ -40,9 +41,13 @@ pub struct Cli {
     #[arg(short, long)]
     log: Option<String>,
 
-    ///
+    /// Path to a command palette file mapping program name to their paths
     #[arg(short, long)]
-    command_palette_path: Option<PathBuf>,
+    command_palette: Option<PathBuf>,
+
+    /// Path to a environment file
+    #[arg(short, long)]
+    environments: Option<PathBuf>,
 }
 
 pub async fn app(cli: Cli) -> Result<()> {
@@ -75,16 +80,14 @@ pub async fn app(cli: Cli) -> Result<()> {
         .unwrap();
 
     let command_palette = cli
-        .command_palette_path
+        .command_palette
         .or_ok(std::env::var("COMMANDS_PALETTE").map(PathBuf::from))
         .or_else(|| {
-            let default_path =
-                UserDirs::new().map(|dirs| dirs.home_dir().join("commands-palette.yaml"));
-            if default_path.is_some() && default_path.as_ref().unwrap().exists() {
-                default_path
-            } else {
-                None
-            }
+            UserDirs::new().map(|dirs| {
+                dirs.home_dir()
+                    .join(".cmdproxy")
+                    .join("commands-palette.yaml")
+            })
         });
 
     SERVER_CONF
@@ -95,6 +98,24 @@ pub async fn app(cli: Cli) -> Result<()> {
             command_palette,
         }))
         .unwrap();
+
+    cli.environments
+        .or_ok(std::env::var("ENVIRONMENTS").map(PathBuf::from))
+        .or_else(|| {
+            UserDirs::new().map(|dirs| dirs.home_dir().join(".cmdproxy").join("environments.yaml"))
+        })
+        .map(|environments| {
+            if environments.exists() {
+                std::fs::read_to_string(environments)
+                    .unwrap()
+                    .as_bytes()
+                    .de_yaml::<HashMap<String, String>>()
+                    .unwrap()
+                    .iter()
+                    .for_each(|(key, val)| std::env::set_var(key, val));
+            }
+        })
+        .unwrap_or_default();
 
     let app = celery::app!(
         broker = RedisBroker { SERVER_CONF.get().unwrap().celery.broker_url },
@@ -114,6 +135,7 @@ pub async fn app(cli: Cli) -> Result<()> {
         .as_ref()
         .map(|palette| palette.keys().map(|k| k.as_str()).collect())
         .unwrap_or_default();
+    assert!(!command_queues.is_empty(), "No queues to be consumed!");
 
     app.display_pretty().await;
     app.consume_from(command_queues.as_slice()).await?;

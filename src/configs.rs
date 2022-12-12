@@ -1,8 +1,8 @@
+use chain_ext::io::DeExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
 use chain_ext::mongodb_gridfs::DatabaseExt;
-use chain_ext::path::file_ext::FileExt;
 use mongodb_gridfs::GridFSBucket;
 use serde::{Deserialize, Serialize};
 
@@ -79,9 +79,18 @@ pub struct CmdProxyServerConf {
 
 impl CmdProxyServerConf {
     pub fn new(conf: CmdProxyServerConfFile) -> CmdProxyServerConf {
-        let command_palette = conf.command_palette.as_ref().map(|p| {
-            let f = p.open().unwrap();
-            serde_json::from_reader(f).unwrap()
+        let command_palette = conf.command_palette.as_ref().and_then(|p| {
+            if p.exists() {
+                Some(
+                    std::fs::read_to_string(p)
+                        .unwrap()
+                        .as_bytes()
+                        .de_yaml()
+                        .unwrap(),
+                )
+            } else {
+                None
+            }
         });
 
         CmdProxyServerConf {
