@@ -1,19 +1,14 @@
-use std::sync::Arc;
+use std::collections::HashMap;
+use std::io::Write;
 
-use celery::prelude::*;
-use celery::task::Signature;
-use celery::Celery;
-use chain_ext::mongodb_gridfs::DatabaseExt;
 use chain_ext::option::OptionExt;
 use clap::Parser;
 use fake::Fake;
-use mongodb::Client;
-use mongodb_gridfs_ext::bucket::common::GridFSBucketExt;
-use test_utilities::fs::TempFileKind::Text;
-use test_utilities::gridfs;
+use tempfile::{tempdir, NamedTempFile};
 
+use cmdproxy::configs::{CmdProxyClientConf, CmdProxyClientConfFile};
+use cmdproxy::params::Param;
 use cmdproxy::protocol::RunRequest;
-use cmdproxy::tasks::run;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
@@ -33,6 +28,56 @@ pub struct Cli {
 
 #[tokio::main]
 async fn main() {
+    let fake_workspace = tempdir().unwrap();
+
+    let mut fake_input = NamedTempFile::new_in(fake_workspace.path()).unwrap();
+    let fake_output = NamedTempFile::new_in(fake_workspace.path()).unwrap();
+
+    let fake_stdout = NamedTempFile::new_in(fake_workspace.path()).unwrap();
+    let fake_stderr = NamedTempFile::new_in(fake_workspace.path()).unwrap();
+
+    let fake_input_content = (30..50).fake::<String>();
+    let fake_stdout_content = (30..50).fake::<String>();
+
+    fake_input.write_all(fake_input_content.as_bytes()).unwrap();
+
+    let conf = parse_client_conf();
+
+    let req = RunRequest {
+        command: Param::str("/bin/bash"),
+        args: vec![Param::format(
+            "echo {content} && cat {input} > {output}",
+            HashMap::from([
+                ("content", Param::str(fake_stdout_content.clone())),
+                ("input", Param::ipath(fake_input.path().to_str().unwrap())),
+                ("output", Param::opath(fake_output.path().to_str().unwrap())),
+            ]),
+        )],
+        stdout: Some(Param::opath(fake_stdout.path().to_str().unwrap())),
+        stderr: Some(Param::opath(fake_stderr.path().to_str().unwrap())),
+        cwd: None,
+        env: None,
+        to_downloads: None,
+        to_uploads: None,
+    };
+
+    let client = cmdproxy::client::Client::new(conf).await;
+    let response = client.run(req).await;
+
+    assert_eq!(0, response);
+
+    println!("checking normal output...");
+    let output_content = std::fs::read_to_string(fake_output.path()).unwrap();
+    assert_eq!(fake_input_content, output_content);
+
+    println!("checking stdout output...");
+    let stdout_content = std::fs::read_to_string(fake_stdout.path()).unwrap();
+    assert_eq!(fake_stdout_content + "\n", stdout_content);
+
+    println!("bingo!");
+}
+
+fn parse_client_conf() -> CmdProxyClientConf {
     let cli: Cli = Cli::parse();
 
     let redis_url = cli
@@ -53,80 +98,15 @@ async fn main() {
         .or_wrap("testdb".to_owned())
         .unwrap();
 
+    let conf = CmdProxyClientConf::new(CmdProxyClientConfFile {
+        redis_url: redis_url.clone(),
+        mongo_url: mongo_url.clone(),
+        mongodb_name: mongodb_name.clone(),
+    });
+
     println!("redis run on: {}", redis_url);
     println!("mongo run on: {}", mongo_url);
     println!("mongo dbname: {}", mongodb_name);
 
-    let app: Arc<Celery<RedisBroker, RedisBackend>> = celery::app!(
-        broker = RedisBroker { redis_url.clone() },
-        backend = RedisBackend { redis_url.clone() },
-        tasks = [run],
-        task_routes = ["*" => "celery"],
-    )
-    .await
-    .unwrap();
-
-    let bucket = Client::with_uri_str(mongo_url)
-        .await
-        .unwrap()
-        .database(&mongodb_name)
-        .bucket(None);
-
-    // prepare the fake cloud input
-    let faker = gridfs::TempFileFaker::with_bucket(bucket.clone())
-        .kind(Text)
-        .include_content(true);
-    let fake_input = faker.fake::<gridfs::TempFile>();
-
-    let input_link = fake_input.filename.unwrap();
-    let output_link = (10..20).fake::<String>();
-    let stdout_link = (10..20).fake::<String>();
-    let stdout_content = "hello";
-
-    println!("filename of cloud input: {}", input_link);
-    println!("filename of cloud output: {}", output_link);
-
-    let req = RunRequest {
-        command: "sh".to_string(),
-        args: vec![
-            format!("-c"),
-            format!(
-                "echo {} && cat <#:i>{}</> > <#:o>{}</>",
-                stdout_content, input_link, output_link
-            ),
-        ],
-        stdout: Some(stdout_link.clone()),
-        ..RunRequest::default()
-    };
-    let serialized_req = serde_json::to_string(&req).unwrap();
-
-    let sig: Signature<_> = run::new(serialized_req).with_queue("sh");
-    let res = app
-        .send_task(sig.with_queue("sh"))
-        .await
-        .unwrap()
-        .wait(None)
-        .await;
-
-    println!("returns: {:?}", res);
-
-    // read the cloud output from cloud
-    println!("checking normal output...");
-    let output_content = bucket
-        .read_as_bytes(bucket.id(&output_link).await.unwrap())
-        .await
-        .unwrap();
-    assert_eq!(fake_input.content.unwrap(), output_content);
-
-    println!("checking stdout output...");
-    let output_stdout_content = bucket
-        .read_as_bytes(bucket.id(&stdout_link).await.unwrap())
-        .await
-        .unwrap();
-    assert_eq!(
-        (stdout_content.to_string() + "\n").as_bytes(),
-        output_stdout_content.as_slice()
-    );
-
-    println!("bingo!");
+    conf
 }

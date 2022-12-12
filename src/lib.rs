@@ -4,19 +4,21 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use celery::prelude::*;
-use chain_ext::io::DeExt;
-use chain_ext::mongodb_gridfs::DatabaseExt;
 use chain_ext::option::OptionExt;
-use chain_ext::path::file_ext::FileExt;
 use clap::Parser;
 use directories::UserDirs;
-use mongodb::Client;
 
-use crate::tasks::{run, BUCKET, CLIENT, COMMANDS_PALETTE, MONGO_URI, REDIS_URI};
+use crate::configs::{CmdProxyServerConf, CmdProxyServerConfFile};
+use crate::tasks::{run, SERVER_CONF};
 
+pub mod middles;
 pub mod params;
 pub mod protocol;
-mod run_context;
+// mod run_context;
+pub mod client;
+mod codegen;
+pub mod configs;
+mod server;
 pub mod tasks;
 
 #[derive(Parser, Debug)]
@@ -54,62 +56,49 @@ pub async fn app(cli: Cli) -> Result<()> {
         )
         .init();
 
-    REDIS_URI
-        .set(
-            cli.redis_uri
-                .or_ok(std::env::var("REDIS_URI"))
-                .or_wrap("redis://localhost:6379/".into())
-                .unwrap(),
-        )
+    let redis_url = cli
+        .redis_uri
+        .or_ok(std::env::var("REDIS_URI"))
+        .or_wrap("redis://localhost:6379/".into())
         .unwrap();
 
-    MONGO_URI
-        .set(
-            cli.mongo_uri
-                .or_ok(std::env::var("MONGO_URI"))
-                .or_wrap("mongodb://localhost:27017/".into())
-                .unwrap(),
-        )
+    let mongo_url = cli
+        .mongo_uri
+        .or_ok(std::env::var("MONGO_URI"))
+        .or_wrap("mongodb://localhost:27017/".into())
         .unwrap();
 
-    CLIENT
-        .set(
-            Client::with_uri_str(MONGO_URI.get().unwrap())
-                .await
-                .unwrap(),
-        )
+    let mongodb_name = cli
+        .mongodb_name
+        .or_ok(std::env::var("MONGODB_NAME"))
+        .or_wrap("testdb".to_owned())
         .unwrap();
 
-    BUCKET
-        .set(
-            cli.mongodb_name
-                .or_ok(std::env::var("MONGODB_NAME"))
-                .or_wrap("testdb".to_owned())
-                .map(|name| CLIENT.get().unwrap().database(&name))
-                .or_else(|| CLIENT.get().unwrap().default_database())
-                .expect("Failed to connect to default Mongodb Database")
-                .bucket(None),
-        )
-        .unwrap();
+    let command_palette = cli
+        .command_palette_path
+        .or_ok(std::env::var("COMMANDS_PALETTE").map(PathBuf::from))
+        .or_else(|| {
+            let default_path =
+                UserDirs::new().map(|dirs| dirs.home_dir().join("commands-palette.yaml"));
+            if default_path.is_some() && default_path.as_ref().unwrap().exists() {
+                default_path
+            } else {
+                None
+            }
+        });
 
-    COMMANDS_PALETTE
-        .set(
-            cli.command_palette_path
-                .or_ok(std::env::var("COMMANDS_PALETTE").map(PathBuf::from))
-                .or_else(|| {
-                    UserDirs::new().map(|dirs| dirs.home_dir().join("commands-palette.yaml"))
-                })
-                .expect("Commands palette file not found")
-                .open()
-                .unwrap()
-                .de_yaml()
-                .unwrap(),
-        )
+    SERVER_CONF
+        .set(CmdProxyServerConf::new(CmdProxyServerConfFile {
+            redis_url,
+            mongo_url,
+            mongodb_name,
+            command_palette,
+        }))
         .unwrap();
 
     let app = celery::app!(
-        broker = RedisBroker { REDIS_URI.get().unwrap() },
-        backend = RedisBackend { REDIS_URI.get().unwrap() },
+        broker = RedisBroker { SERVER_CONF.get().unwrap().celery.broker_url },
+        backend = MongoDbBackend { SERVER_CONF.get().unwrap().celery.backend_url },
         tasks = [run],
         task_routes = [
             // this bin will only run in server mode, hence no task needs to be routed
@@ -118,12 +107,13 @@ pub async fn app(cli: Cli) -> Result<()> {
     )
     .await?;
 
-    let command_queues = COMMANDS_PALETTE
+    let command_queues: Vec<_> = SERVER_CONF
         .get()
         .unwrap()
-        .keys()
-        .map(|k| k.as_str())
-        .collect::<Vec<_>>();
+        .command_palette
+        .as_ref()
+        .map(|palette| palette.keys().map(|k| k.as_str()).collect())
+        .unwrap_or_default();
 
     app.display_pretty().await;
     app.consume_from(command_queues.as_slice()).await?;
