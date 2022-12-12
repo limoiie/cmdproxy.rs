@@ -62,7 +62,7 @@ async fn main() {
     };
 
     let client = cmdproxy::client::Client::new(conf).await;
-    let response = client.run(req).await;
+    let response = client.run(req, Some("celery".to_string())).await;
 
     assert_eq!(0, response);
 
@@ -82,19 +82,19 @@ fn parse_client_conf() -> CmdProxyClientConf {
 
     let redis_url = cli
         .redis_url
-        .or_ok(std::env::var("REDIS_URI"))
+        .or_ok(std::env::var("CMDPROXY_REDIS_URL"))
         .or_wrap("redis://localhost:6379/".to_owned())
         .unwrap();
 
     let mongo_url = cli
         .mongo_url
-        .or_ok(std::env::var("MONGO_URI"))
+        .or_ok(std::env::var("CMDPROXY_MONGO_URL"))
         .or_wrap("mongodb://localhost:27017/".to_owned())
         .unwrap();
 
     let mongodb_name = cli
         .mongodb_name
-        .or_ok(std::env::var("MONGODB_NAME"))
+        .or_ok(std::env::var("CMDPROXY_MONGODB_NAME"))
         .or_wrap("testdb".to_owned())
         .unwrap();
 

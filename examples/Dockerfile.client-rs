@@ -16,5 +16,4 @@ COPY ./examples examples
 
 RUN cargo build --example client
 
-# todo: prepare envs REDIS_URI, MONGO_URI
 CMD ["cargo", "run", "--example", "client"]

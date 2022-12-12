@@ -27,11 +27,11 @@ pub mod tasks;
 pub struct Cli {
     /// Uri to the redis broker
     #[arg(short, long)]
-    redis_uri: Option<String>,
+    redis_url: Option<String>,
 
     /// Uri to the mongo remote-fs
     #[arg(short, long)]
-    mongo_uri: Option<String>,
+    mongo_url: Option<String>,
 
     /// Name of database where stores the remote-fs
     #[arg(long)]
@@ -54,7 +54,7 @@ pub async fn app(cli: Cli) -> Result<()> {
     env_logger::Builder::new()
         .parse_filters(
             cli.log
-                .or_ok(std::env::var("RUST_LOG"))
+                .or_ok(std::env::var("CMDPROXY_RUST_LOG"))
                 .or_wrap("info".into())
                 .unwrap()
                 .as_str(),
@@ -62,26 +62,26 @@ pub async fn app(cli: Cli) -> Result<()> {
         .init();
 
     let redis_url = cli
-        .redis_uri
-        .or_ok(std::env::var("REDIS_URI"))
+        .redis_url
+        .or_ok(std::env::var("CMDPROXY_REDIS_URL"))
         .or_wrap("redis://localhost:6379/".into())
         .unwrap();
 
     let mongo_url = cli
-        .mongo_uri
-        .or_ok(std::env::var("MONGO_URI"))
+        .mongo_url
+        .or_ok(std::env::var("CMDPROXY_MONGO_URL"))
         .or_wrap("mongodb://localhost:27017/".into())
         .unwrap();
 
     let mongodb_name = cli
         .mongodb_name
-        .or_ok(std::env::var("MONGODB_NAME"))
+        .or_ok(std::env::var("CMDPROXY_MONGODB_NAME"))
         .or_wrap("testdb".to_owned())
         .unwrap();
 
     let command_palette = cli
         .command_palette
-        .or_ok(std::env::var("COMMANDS_PALETTE").map(PathBuf::from))
+        .or_ok(std::env::var("CMDPROXY_COMMAND_PALETTE").map(PathBuf::from))
         .or_else(|| {
             UserDirs::new().map(|dirs| {
                 dirs.home_dir()
@@ -100,7 +100,7 @@ pub async fn app(cli: Cli) -> Result<()> {
         .unwrap();
 
     cli.environments
-        .or_ok(std::env::var("ENVIRONMENTS").map(PathBuf::from))
+        .or_ok(std::env::var("CMDPROXY_ENVIRONMENTS").map(PathBuf::from))
         .or_else(|| {
             UserDirs::new().map(|dirs| dirs.home_dir().join(".cmdproxy").join("environments.yaml"))
         })
