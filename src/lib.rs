@@ -112,6 +112,11 @@ pub async fn app(cli: Cli) -> Result<()> {
                     .de_yaml::<HashMap<String, String>>()
                     .unwrap()
                     .iter()
+                    .chain(
+                        // also insert command palette into environment variables, so that we can
+                        // resolve command path via EnvParam
+                        SERVER_CONF.get().unwrap().command_palette.iter(),
+                    )
                     .for_each(|(key, val)| std::env::set_var(key, val));
             }
         })
@@ -132,9 +137,9 @@ pub async fn app(cli: Cli) -> Result<()> {
         .get()
         .unwrap()
         .command_palette
-        .as_ref()
-        .map(|palette| palette.keys().map(|k| k.as_str()).collect())
-        .unwrap_or_default();
+        .keys()
+        .map(String::as_str)
+        .collect();
     assert!(!command_queues.is_empty(), "No queues to be consumed!");
 
     app.display_pretty().await;

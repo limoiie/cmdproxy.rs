@@ -1,7 +1,7 @@
-use chain_ext::io::DeExt;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
+use chain_ext::io::DeExt;
 use chain_ext::mongodb_gridfs::DatabaseExt;
 use mongodb_gridfs::GridFSBucket;
 use serde::{Deserialize, Serialize};
@@ -73,25 +73,29 @@ impl CmdProxyClientConf {
 pub struct CmdProxyServerConf {
     pub(crate) celery: CeleryConf,
     pub(crate) cloud: CloudFSConf,
-    pub command_palette: Option<HashMap<String, String>>,
+    pub command_palette: HashMap<String, String>,
     pub command_palette_path: Option<PathBuf>,
 }
 
 impl CmdProxyServerConf {
     pub fn new(conf: CmdProxyServerConfFile) -> CmdProxyServerConf {
-        let command_palette = conf.command_palette.as_ref().and_then(|p| {
-            if p.exists() {
-                Some(
-                    std::fs::read_to_string(p)
-                        .unwrap()
-                        .as_bytes()
-                        .de_yaml()
-                        .unwrap(),
-                )
-            } else {
-                None
-            }
-        });
+        let command_palette = conf
+            .command_palette
+            .as_ref()
+            .and_then(|p| {
+                if p.exists() {
+                    Some(
+                        std::fs::read_to_string(p)
+                            .unwrap()
+                            .as_bytes()
+                            .de_yaml()
+                            .unwrap(),
+                    )
+                } else {
+                    None
+                }
+            })
+            .unwrap_or_default();
 
         CmdProxyServerConf {
             celery: CeleryConf {
