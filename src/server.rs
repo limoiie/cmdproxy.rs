@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::process::Stdio;
 
+use log::debug;
 use tempfile::tempdir;
 
 use crate::apply_middles;
@@ -22,6 +23,8 @@ impl Server {
         let bucket = self.conf.cloud.grid_fs().await;
 
         let real_run = |run_spec: RunSpec| async move {
+            debug!("Running command with spec as:\n{:#?}", run_spec);
+
             let stdout = run_spec
                 .stdout
                 .as_ref()

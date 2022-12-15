@@ -6,6 +6,7 @@ use celery::prelude::*;
 use celery::result::BaseResult;
 use celery::task::Signature;
 use celery::Celery;
+use log::debug;
 
 use crate::apply_middles;
 use crate::configs::CmdProxyClientConf;
@@ -44,6 +45,8 @@ impl Client {
             .expect("You must either explicitly specify the queue, or wrap command as EnvParam!");
 
         let proxy_run = |serialized: String| async {
+            debug!("Sending RunRequest to queue `{queue}'...");
+
             let sig: Signature<_> = run::new(serialized).with_queue(queue.as_str());
             app.send_task(sig)
                 .await
