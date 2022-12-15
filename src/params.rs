@@ -196,4 +196,106 @@ impl Param {
         assert!(self.is_local());
         self.upload(bucket, self.filepath()).await
     }
+
+    pub async fn download_to_string(&self, bucket: GridFSBucket) -> GridFSExtResult<String> {
+        bucket.read_string(self.cloud_url().as_str()).await
+    }
+
+    pub async fn upload_from_string<S: AsRef<str>>(
+        &self,
+        mut bucket: GridFSBucket,
+        content: S,
+    ) -> GridFSExtResult<()> {
+        bucket
+            .write_string(self.cloud_url().as_str(), content.as_ref())
+            .await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(test)]
+    mod test_file_param {
+        use std::io::Write;
+
+        use chain_ext::mongodb_gridfs::DatabaseExt;
+        use fake::Fake;
+        use tempfile::tempdir;
+        use test_utilities::docker;
+
+        use super::*;
+
+        #[test]
+        fn test_conversion() {
+            let fake_file = tempfile::NamedTempFile::new().unwrap();
+
+            let param = Param::ipath(fake_file.path().to_str().unwrap());
+            assert!(matches!(param, Param::InLocalFileParam { .. }));
+
+            let param = param.as_cloud();
+            assert!(matches!(param, Param::InCloudFileParam { .. }));
+
+            let param = Param::opath(fake_file.path().to_str().unwrap());
+            assert!(matches!(param, Param::OutLocalFileParam { .. }));
+
+            let param = param.as_cloud();
+            assert!(matches!(param, Param::OutCloudFileParam { .. }));
+        }
+
+        #[tokio::test]
+        async fn test_upload_download() {
+            let workspace = tempdir().unwrap();
+
+            let container = docker::Builder::new("mongo")
+                .name("cmdproxy-test-params")
+                .port_mapping(0, Some(27017))
+                .build_disposable()
+                .await;
+
+            let bucket = mongodb::Client::with_uri_str(container.url.as_ref().unwrap())
+                .await
+                .unwrap()
+                .database("cmdproxy-test-params-db")
+                .bucket(None);
+
+            let mut fake_file = tempfile::NamedTempFile::new_in(workspace.path()).unwrap();
+            let fake_filepath = fake_file.path().to_str().unwrap().to_owned();
+            let fake_content = (20..40).fake::<String>();
+            fake_file.write_all(fake_content.as_bytes()).unwrap();
+
+            let param = Param::ipath(fake_filepath.as_str());
+            let uploaded_id = param
+                .upload(bucket.clone(), fake_filepath.as_str())
+                .await
+                .unwrap();
+
+            let content_on_cloud = bucket
+                .clone()
+                .read_string(param.cloud_url().as_str())
+                .await
+                .unwrap();
+
+            // assert upload
+            assert_eq!(
+                content_on_cloud,
+                std::fs::read_to_string(fake_filepath.as_str()).unwrap()
+            );
+
+            let downloaded_file = tempfile::NamedTempFile::new_in(workspace.path()).unwrap();
+            let downloaded_filepath = downloaded_file.path();
+            let downloaded_id = param
+                .download(bucket.clone(), downloaded_filepath)
+                .await
+                .unwrap();
+
+            // assert download
+            assert_eq!(uploaded_id, downloaded_id);
+            assert_eq!(
+                std::fs::read_to_string(downloaded_filepath).unwrap(),
+                std::fs::read_to_string(fake_filepath.as_str()).unwrap()
+            );
+        }
+    }
 }
