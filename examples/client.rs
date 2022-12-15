@@ -45,14 +45,17 @@ async fn main() {
 
     let req = RunRequest {
         command: Param::str("/bin/bash"),
-        args: vec![Param::format(
-            "echo {content} && cat {input} > {output}",
-            HashMap::from([
-                ("content", Param::str(fake_stdout_content.clone())),
-                ("input", Param::ipath(fake_input.path().to_str().unwrap())),
-                ("output", Param::opath(fake_output.path().to_str().unwrap())),
-            ]),
-        )],
+        args: vec![
+            Param::str("-c"),
+            Param::format(
+                "echo '{content}' && cat {input} > {output}",
+                HashMap::from([
+                    ("content", Param::str(fake_stdout_content.clone())),
+                    ("input", Param::ipath(fake_input.path().to_str().unwrap())),
+                    ("output", Param::opath(fake_output.path().to_str().unwrap())),
+                ]),
+            ),
+        ],
         stdout: Some(Param::opath(fake_stdout.path().to_str().unwrap())),
         stderr: Some(Param::opath(fake_stderr.path().to_str().unwrap())),
         cwd: None,
@@ -61,18 +64,28 @@ async fn main() {
         to_uploads: None,
     };
 
+    println!("running through the proxy...");
     let client = cmdproxy::client::Client::new(conf).await;
-    let response = client.run(req, Some("celery".to_string())).await;
+    let response = client.run(req, Some("sh".to_string())).await;
 
     assert_eq!(0, response);
 
-    println!("checking normal output...");
-    let output_content = std::fs::read_to_string(fake_output.path()).unwrap();
-    assert_eq!(fake_input_content, output_content);
+    println!(
+        "received stdout: {}",
+        tokio::fs::read_to_string(fake_stdout.path()).await.unwrap()
+    );
+    println!(
+        "received stderr: {}",
+        tokio::fs::read_to_string(fake_stderr.path()).await.unwrap()
+    );
 
     println!("checking stdout output...");
-    let stdout_content = std::fs::read_to_string(fake_stdout.path()).unwrap();
+    let stdout_content = tokio::fs::read_to_string(fake_stdout.path()).await.unwrap();
     assert_eq!(fake_stdout_content + "\n", stdout_content);
+
+    println!("checking normal output...");
+    let output_content = tokio::fs::read_to_string(fake_output.path()).await.unwrap();
+    assert_eq!(fake_input_content, output_content);
 
     println!("bingo!");
 }
