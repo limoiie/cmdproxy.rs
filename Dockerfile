@@ -17,4 +17,4 @@ RUN cargo install --locked --path .
 
 COPY ./examples examples
 
-CMD ["cmdproxy", "--command-palette-path=./examples/commands-palette.yaml"]
+CMD ["cmdproxy", "--command-palette=./examples/commands-palette.yaml"]

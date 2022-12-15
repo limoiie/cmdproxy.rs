@@ -3,15 +3,15 @@
 
 version: '3'
 services:
-  db:
+  backend:
     image: mongo:latest
-    container_name: cmdproxy-db
+    container_name: cmdproxy-backend
     networks:
       - overlay
     ports:
       - "27017:27017"
     environment:
-      - MONGO_INITDB_DATABASE=testdb
+      - MONGO_INITDB_DATABASE=cmdproxy-testdb
 
   broker:
     image: redis:latest
@@ -23,49 +23,52 @@ services:
     
   cmdproxy:
     build: .
-    image: cmdproxy:0.2.2
+    image: cmdproxy.rs:volatile
     container_name: cmdproxy-server
     depends_on:
-      - db
+      - backend
       - broker
     networks:
       - overlay
     environment:
-      - CMDPROXY_MONGODB_NAME=testdb
-      - CMDPROXY_MONGO_URL=mongodb://db:27017
+      - CMDPROXY_RUST_LOG=TRACE
+      - CMDPROXY_MONGODB_NAME=cmdproxy-testdb
+      - CMDPROXY_MONGO_URL=mongodb://backend:27017
       - CMDPROXY_REDIS_URL=redis://broker:6379
 
-  py-client:
-    build:
-      context: .
-      dockerfile: ./examples/Dockerfile.client-py
-    image: cmdproxy-example-client-py:0.2.2
-    container_name: cmdproxy-client
-    depends_on:
-      - db
-      - broker
-    networks:
-      - overlay
-    environment:
-      - CMDPROXY_MONGODB_NAME=testdb
-      - CMDPROXY_MONGO_URL=mongodb://db:27017
-      - CMDPROXY_REDIS_URL=redis://broker:6379
-    profiles: ["py-client"]
+# todo: use the cmdproxy.py
+#  py-client:
+#    build:
+#      context: .
+#      dockerfile: ./examples/Dockerfile.client-py
+#    image: cmdproxy-example-client-py:0.2.2
+#    container_name: cmdproxy-client
+#    depends_on:
+#      - backend
+#      - broker
+#    networks:
+#      - overlay
+#    environment:
+#      - CMDPROXY_MONGODB_NAME=cmdproxy-testdb
+#      - CMDPROXY_MONGO_URL=mongodb://backend:27017
+#      - CMDPROXY_REDIS_URL=redis://broker:6379
+#    profiles: ["py-client"]
 
   rs-client:
     build:
       context: .
       dockerfile: ./examples/Dockerfile.client-rs
-    image: cmdproxy-example-client-py:0.2.2
+    image: cmdproxy-example-client-rs:0.2.2
     container_name: cmdproxy-client
     depends_on:
-      - db
+      - backend
       - broker
     networks:
       - overlay
     environment:
-      - CMDPROXY_MONGODB_NAME=testdb
-      - CMDPROXY_MONGO_URL=mongodb://db:27017
+      - CMDPROXY_RUST_LOG=TRACE
+      - CMDPROXY_MONGODB_NAME=cmdproxy-testdb
+      - CMDPROXY_MONGO_URL=mongodb://backend:27017
       - CMDPROXY_REDIS_URL=redis://broker:6379
     profiles: ["rs-client"]
 
