@@ -370,6 +370,8 @@ pub(crate) mod client {
 }
 
 pub(crate) mod server {
+    use tempfile::TempPath;
+
     use crate::protocol::RunResponse;
 
     use super::*;
@@ -383,14 +385,13 @@ pub(crate) mod server {
     }
 
     struct InCloudFileGuard {
-        tempdir: Arc<TempDir>,
+        temppath: TempPath,
         bucket: GridFSBucket,
         param: Param,
     }
 
     struct OutCloudFileGuard {
-        tempdir: Arc<TempDir>,
-        temppath: Arc<Mutex<RefCell<String>>>,
+        temppath: TempPath,
         bucket: GridFSBucket,
         param: Param,
     }
@@ -424,40 +425,24 @@ pub(crate) mod server {
     #[async_trait]
     impl ArgGuard for InCloudFileGuard {
         async fn enter(&self) -> String {
-            let temppath = tempfile::Builder::new()
-                .tempfile_in(self.tempdir.as_ref().path())
-                .unwrap()
-                .into_temp_path();
-
             self.param
-                .download(self.bucket.clone(), temppath.to_path_buf())
+                .download(self.bucket.clone(), self.temppath.to_path_buf())
                 .await
                 .unwrap();
 
-            temppath.to_str().unwrap().to_string()
+            self.temppath.to_str().unwrap().to_string()
         }
     }
 
     #[async_trait]
     impl ArgGuard for OutCloudFileGuard {
         async fn enter(&self) -> String {
-            let temppath = tempfile::Builder::new()
-                .tempfile_in(self.tempdir.as_ref().path())
-                .unwrap()
-                .into_temp_path();
-
-            let mutex = self.temppath.lock().await;
-            *mutex.borrow_mut() = temppath.to_str().unwrap().to_string();
-
-            temppath.to_str().unwrap().to_string()
+            self.temppath.to_str().unwrap().to_string()
         }
 
         async fn exit(&mut self) {
-            let mutex = self.temppath.lock().await;
-            let filepath = mutex.borrow().to_string();
-
             self.param
-                .upload(self.bucket.clone(), filepath)
+                .upload(self.bucket.clone(), self.temppath.to_path_buf())
                 .await
                 .unwrap();
         }
@@ -483,7 +468,7 @@ pub(crate) mod server {
     }
 
     struct ContextStack {
-        tempdir: Arc<TempDir>,
+        tempdir: TempDir,
         bucket: GridFSBucket,
         guards: RefCell<Vec<Box<dyn ArgGuard>>>,
     }
@@ -491,6 +476,14 @@ pub(crate) mod server {
     impl ContextStack {
         pub async fn wrap_arg(ctx: Arc<Mutex<ContextStack>>, arg: Param) -> String {
             let bucket = ctx.lock().await.bucket.clone();
+            let new_temppath = || async {
+                let tempdir = &ctx.lock().await.tempdir;
+                let temppath = tempfile::Builder::new()
+                    .tempfile_in(tempdir.path())
+                    .unwrap()
+                    .into_temp_path();
+                temppath
+            };
 
             let guard: Box<dyn ArgGuard> = match arg {
                 Param::StrParam { value } => Box::new(StrGuard { value }),
@@ -501,13 +494,12 @@ pub(crate) mod server {
                     ctx: ctx.clone(),
                 }),
                 param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard {
-                    tempdir: ctx.lock().await.tempdir.clone(),
+                    temppath: new_temppath().await,
                     bucket,
                     param,
                 }),
                 param @ Param::OutCloudFileParam { .. } => Box::new(OutCloudFileGuard {
-                    tempdir: ctx.lock().await.tempdir.clone(),
-                    temppath: Arc::new(Mutex::new(RefCell::new("".to_string()))),
+                    temppath: new_temppath().await,
                     bucket,
                     param,
                 }),
@@ -548,7 +540,7 @@ pub(crate) mod server {
         pub(crate) fn new(bucket: GridFSBucket, tempdir: TempDir) -> ProxyInvokeMiddle {
             ProxyInvokeMiddle {
                 ctx: Arc::new(Mutex::new(ContextStack {
-                    tempdir: Arc::new(tempdir),
+                    tempdir,
                     bucket,
                     guards: RefCell::new(vec![]),
                 })),
@@ -834,6 +826,7 @@ mod tests {
     #[cfg(test)]
     mod test_server {
         use std::io::Write;
+        use std::path::Path;
 
         use chain_ext::mongodb_gridfs::DatabaseExt;
         use fake::Fake;
@@ -944,6 +937,7 @@ mod tests {
                 let cap = pat.captures(run_spec.args.last().unwrap()).unwrap();
 
                 assert_eq!(cap.len(), 4);
+                // assert string is formatted correctly
                 assert!(cap.name("content").is_some());
                 assert_eq!(
                     cap.name("content").unwrap().as_str(),
@@ -951,6 +945,13 @@ mod tests {
                 );
                 assert!(cap.name("input").is_some());
                 assert!(cap.name("output").is_some());
+
+                // assert all the inputs have been downloaded
+                assert!(Path::new(cap.name("input").unwrap().as_str()).exists());
+                assert_eq!(
+                    std::fs::read_to_string(cap.name("input").unwrap().as_str()).unwrap(),
+                    fake_input_content.as_str()
+                );
 
                 // mimic server to generate output files
                 std::fs::write(
