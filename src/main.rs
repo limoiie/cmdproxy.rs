@@ -5,5 +5,5 @@ use clap::Parser;
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    cmdproxy::app(cmdproxy::Cli::parse()).await
+    cmdproxy::app::app(cmdproxy::app::Cli::parse()).await
 }
