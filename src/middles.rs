@@ -234,14 +234,11 @@ pub(crate) mod client {
 
             param
         }
-    }
 
-    impl Drop for ContextStack {
-        fn drop(&mut self) {
+        //noinspection DuplicatedCode
+        async fn drop_guards(&mut self) {
             let mut guards = self.guards.take();
-            futures::executor::block_on(futures::future::join_all(
-                guards.iter_mut().map(|guard| guard.exit()),
-            ));
+            futures::future::join_all(guards.iter_mut().map(|guard| guard.exit())).await;
         }
     }
 
@@ -257,6 +254,16 @@ pub(crate) mod client {
                     guards: RefCell::new(vec![]),
                 })),
             }
+        }
+    }
+
+    //noinspection DuplicatedCode
+    impl Drop for ProxyInvokeMiddle {
+        fn drop(&mut self) {
+            futures::executor::block_on(async {
+                let mut ctx = self.ctx.lock().await;
+                ctx.drop_guards().await;
+            })
         }
     }
 
@@ -514,18 +521,15 @@ pub(crate) mod server {
 
             param
         }
-    }
 
-    //noinspection DuplicatedCode
-    impl Drop for ContextStack {
-        fn drop(&mut self) {
+        //noinspection DuplicatedCode
+        async fn drop_guards(&mut self) {
             let mut guards = self.guards.take();
-            futures::executor::block_on(futures::future::join_all(
-                guards.iter_mut().rev().map(|guard| guard.exit()),
-            ));
+            futures::future::join_all(guards.iter_mut().map(|guard| guard.exit())).await;
         }
     }
 
+    #[derive(Debug)]
     pub(crate) struct RunSpec {
         pub(crate) command: String,
         pub(crate) args: Vec<String>,
@@ -549,6 +553,16 @@ pub(crate) mod server {
                     guards: RefCell::new(vec![]),
                 })),
             }
+        }
+    }
+
+    //noinspection DuplicatedCode
+    impl Drop for ProxyInvokeMiddle {
+        fn drop(&mut self) {
+            futures::executor::block_on(async {
+                let mut ctx = self.ctx.lock().await;
+                ctx.drop_guards().await;
+            })
         }
     }
 
