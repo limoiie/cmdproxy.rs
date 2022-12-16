@@ -719,9 +719,9 @@ mod tests {
                 param
             };
 
-            let req = RunRequest {
-                command: Param::str("/bin/bash"),
-                args: vec![
+            let req = RunRequest::builder()
+                .command(Param::str("/bin/bash"))
+                .args(vec![
                     Param::str("-c"),
                     Param::format(
                         "echo '{content}' && cat {input} > {output}",
@@ -743,17 +743,13 @@ mod tests {
                             ),
                         ]),
                     ),
-                ],
-                stdout: Some(opath(
+                ])
+                .stdout(opath(
                     fake_stdout.path().to_str().unwrap(),
                     fake_stdout_content.clone(),
-                )),
-                stderr: Some(opath(fake_stderr.path().to_str().unwrap(), String::new())),
-                cwd: None,
-                env: None,
-                to_downloads: None,
-                to_uploads: None,
-            };
+                ))
+                .stderr(opath(fake_stderr.path().to_str().unwrap(), String::new()))
+                .build();
 
             {
                 let invoke_middle = client::ProxyInvokeMiddle::new(bucket.clone());
@@ -878,9 +874,9 @@ mod tests {
                 param
             };
 
-            let req = RunRequest {
-                command: Param::str("/bin/bash"),
-                args: vec![
+            let req = RunRequest::builder()
+                .command(Param::str("/bin/bash"))
+                .args(vec![
                     Param::str("-c"),
                     Param::format(
                         "echo '{content}' && cat {input} > {output}",
@@ -902,17 +898,13 @@ mod tests {
                             ),
                         ]),
                     ),
-                ],
-                stdout: Some(opath(
+                ])
+                .stdout(opath(
                     fake_stdout.path().to_str().unwrap(),
                     fake_stdout_content.clone(),
-                )),
-                stderr: Some(opath(fake_stderr.path().to_str().unwrap(), String::new())),
-                cwd: None,
-                env: None,
-                to_downloads: None,
-                to_uploads: None,
-            };
+                ))
+                .stderr(opath(fake_stderr.path().to_str().unwrap(), String::new()))
+                .build();
 
             // mimic client upload input files
             for (param, content) in &in_params {

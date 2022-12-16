@@ -43,9 +43,9 @@ async fn main() {
 
     let conf = parse_client_conf();
 
-    let req = RunRequest {
-        command: Param::str("/bin/bash"),
-        args: vec![
+    let req = RunRequest::builder()
+        .command(Param::str("/bin/bash"))
+        .args(vec![
             Param::str("-c"),
             Param::format(
                 "echo '{content}' && cat {input} > {output}",
@@ -55,14 +55,10 @@ async fn main() {
                     ("output", Param::opath(fake_output.path().to_str().unwrap())),
                 ]),
             ),
-        ],
-        stdout: Some(Param::opath(fake_stdout.path().to_str().unwrap())),
-        stderr: Some(Param::opath(fake_stderr.path().to_str().unwrap())),
-        cwd: None,
-        env: None,
-        to_downloads: None,
-        to_uploads: None,
-    };
+        ])
+        .stdout(Param::opath(fake_stdout.path().to_str().unwrap()))
+        .stderr(Param::opath(fake_stderr.path().to_str().unwrap()))
+        .build();
 
     println!("running through the proxy...");
     let client = cmdproxy::client::Client::new(conf).await;
