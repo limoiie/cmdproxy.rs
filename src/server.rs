@@ -44,13 +44,16 @@ impl Server {
                 .current_dir(run_spec.cwd.unwrap_or_else(|| ".".to_owned()))
                 .envs(run_spec.env.unwrap_or_default())
                 .status();
-            st.unwrap().code().unwrap()
+            Ok(st?.code().unwrap_or(0))
         };
 
-        apply_middles!(serialized_run_request,
-            @server::UnpackAndDeserializeMiddle::new()
-            @server::ProxyInvokeMiddle::new(bucket, workspace)
-            => real_run
-        )
+        let res = apply_middles!(
+            serialized_run_request,
+            >=< server::UnpackAndDeserializeMiddle::new(),
+            >=< server::ProxyInvokeMiddle::new(bucket, workspace),
+            >>= real_run
+        );
+        // todo: find a place to embedding the error into serialized response
+        res.unwrap()
     }
 }

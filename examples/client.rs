@@ -64,7 +64,7 @@ async fn main() {
     let client = cmdproxy::client::Client::new(conf).await;
     let response = client.run(req, Some("sh".to_string())).await;
 
-    assert_eq!(0, response);
+    assert_eq!(0, response.unwrap());
 
     println!(
         "received stdout: {}",

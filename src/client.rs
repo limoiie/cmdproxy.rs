@@ -34,7 +34,7 @@ impl Client {
         Client { conf, app }
     }
 
-    pub async fn run(&self, run_request: RunRequest, queue: Option<String>) -> i32 {
+    pub async fn run(&self, run_request: RunRequest, queue: Option<String>) -> anyhow::Result<i32> {
         let app = self.app.clone();
         let bucket = self.conf.cloud.grid_fs().await;
         let queue = queue
@@ -48,21 +48,15 @@ impl Client {
             debug!("Sending RunRequest to queue `{queue}'...");
 
             let sig: Signature<_> = run::new(serialized).with_queue(queue.as_str());
-            app.send_task(sig)
-                .await
-                .unwrap()
-                .wait(None)
-                .await
-                // todo: how to handle the errors?
-                .unwrap()
-                .unwrap()
+            Ok(app.send_task(sig).await.unwrap().wait(None).await??)
         };
 
-        let res = apply_middles!(run_request,
-            @client::ProxyInvokeMiddle::new(bucket)
-            @client::PackAndSerializeMiddle::new()
-            => proxy_run
+        let res = apply_middles!(
+            run_request,
+            >=< client::ProxyInvokeMiddle::new(bucket),
+            >=< client::PackAndSerializeMiddle::new(),
+            >>= proxy_run
         );
-        res.return_code
+        res.map(|r| r.return_code)
     }
 }

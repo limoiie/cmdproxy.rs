@@ -22,9 +22,14 @@ macro_rules! __apply_middles_in_stack {
     ) => {{
         let middle = $middle;
         let arg = middle.transform_request($arg).await;
-        let arg = $crate::__apply_middles_in_stack!(arg, $func, [ $($middles),* ]);
-        let arg = middle.transform_response(arg).await;
-        arg
+        match arg {
+            Ok(arg) => {
+                let arg = $crate::__apply_middles_in_stack!(arg, $func, [ $($middles),* ]);
+                let arg = middle.transform_response(arg).await;
+                arg
+            },
+            Err(err) => Err(err),
+        }
     }};
     ( $arg:expr, $func:expr, [] ) => { $func($arg).await };
 }
@@ -33,8 +38,8 @@ macro_rules! __apply_middles_in_stack {
 macro_rules! apply_middles {
     (
         $init:expr,
-        $( @$middles:expr )+
-        => $func:ident
+        $( >=< $middles:expr, )+
+        >>= $func:ident
     ) => {
         $crate::__apply_middles_in_stack!( $init, $func, [ $( $middles ),* ] )
     };
@@ -48,9 +53,12 @@ where
     IRequest: Send,
     IResponse: Send,
 {
-    async fn transform_request(&self, request: Request) -> IRequest;
+    async fn transform_request(&self, request: Request) -> anyhow::Result<IRequest>;
 
-    async fn transform_response(&self, response: IResponse) -> Response;
+    async fn transform_response(
+        &self,
+        response: anyhow::Result<IResponse>,
+    ) -> anyhow::Result<Response>;
 }
 
 pub(crate) mod client {
@@ -96,91 +104,92 @@ pub(crate) mod client {
 
     #[async_trait]
     trait ArgGuard: Send + Sync {
-        async fn enter(&self) -> Param;
-        async fn exit(&mut self) {}
+        async fn enter(&self) -> anyhow::Result<Param>;
+        async fn exit(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn clean(&mut self) {}
     }
 
     #[async_trait]
     impl ArgGuard for StrGuard {
-        async fn enter(&self) -> Param {
-            Param::StrParam {
+        async fn enter(&self) -> anyhow::Result<Param> {
+            Ok(Param::StrParam {
                 value: self.value.clone(),
-            }
+            })
         }
     }
 
     #[async_trait]
     impl ArgGuard for EnvGuard {
-        async fn enter(&self) -> Param {
-            Param::StrParam {
-                value: std::env::var(self.name.as_str()).unwrap(),
-            }
+        async fn enter(&self) -> anyhow::Result<Param> {
+            Ok(Param::StrParam {
+                value: std::env::var(self.name.as_str())?,
+            })
         }
     }
 
     #[async_trait]
     impl ArgGuard for RemoteEnvGuard {
-        async fn enter(&self) -> Param {
-            Param::EnvParam {
+        async fn enter(&self) -> anyhow::Result<Param> {
+            Ok(Param::EnvParam {
                 name: self.name.clone(),
-            }
+            })
         }
     }
 
     #[async_trait]
     impl ArgGuard for InCloudFileGuard {
-        async fn enter(&self) -> Param {
-            self.param.clone()
+        async fn enter(&self) -> anyhow::Result<Param> {
+            Ok(self.param.clone())
         }
     }
 
     #[async_trait]
     impl ArgGuard for InLocalFileGuard {
-        async fn enter(&self) -> Param {
-            self.param
-                .upload_inplace(self.bucket.clone())
-                .await
-                .unwrap();
-            self.param.as_cloud()
+        async fn enter(&self) -> anyhow::Result<Param> {
+            self.param.upload_inplace(self.bucket.clone()).await?;
+            Ok(self.param.as_cloud())
         }
 
-        async fn exit(&mut self) {
+        async fn clean(&mut self) {
             self.param
                 .remove_from_cloud(self.bucket.clone())
                 .await
-                .unwrap();
+                .unwrap_or_default();
         }
     }
 
     #[async_trait]
     impl ArgGuard for OutCloudFileGuard {
-        async fn enter(&self) -> Param {
-            self.param.as_cloud()
+        async fn enter(&self) -> anyhow::Result<Param> {
+            Ok(self.param.as_cloud())
         }
     }
 
     #[async_trait]
     impl ArgGuard for OutLocalFileGuard {
-        async fn enter(&self) -> Param {
-            self.param.as_cloud()
+        async fn enter(&self) -> anyhow::Result<Param> {
+            Ok(self.param.as_cloud())
         }
 
-        async fn exit(&mut self) {
-            self.param
-                .download_inplace(self.bucket.clone())
-                .await
-                .unwrap();
+        async fn exit(&self) -> anyhow::Result<()> {
+            self.param.download_inplace(self.bucket.clone()).await?;
+            Ok(())
+        }
+
+        async fn clean(&mut self) {
             self.param
                 .remove_from_cloud(self.bucket.clone())
                 .await
-                .unwrap();
+                .unwrap_or_default();
         }
     }
 
     #[async_trait]
     impl ArgGuard for FormatGuard {
         //noinspection DuplicatedCode
-        async fn enter(&self) -> Param {
+        async fn enter(&self) -> anyhow::Result<Param> {
             let args = futures::future::join_all(
                 self.args
                     .values()
@@ -188,14 +197,16 @@ pub(crate) mod client {
             )
             .await
             .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?
+            .into_iter()
             .zip(self.args.keys())
             .map(|(param, name)| (name.clone(), param))
             .collect();
 
-            Param::FormatParam {
+            Ok(Param::FormatParam {
                 tmpl: self.tmpl.clone(),
                 args,
-            }
+            })
         }
     }
 
@@ -205,7 +216,7 @@ pub(crate) mod client {
     }
 
     impl ContextStack {
-        pub async fn wrap_arg(ctx: Arc<Mutex<ContextStack>>, arg: Param) -> Param {
+        pub async fn wrap_arg(ctx: Arc<Mutex<ContextStack>>, arg: Param) -> anyhow::Result<Param> {
             let bucket = ctx.lock().await.bucket.clone();
 
             let guard: Box<dyn ArgGuard> = match arg {
@@ -236,9 +247,18 @@ pub(crate) mod client {
         }
 
         //noinspection DuplicatedCode
-        async fn drop_guards(&mut self) {
+        async fn close(&mut self) -> anyhow::Result<Vec<()>> {
+            let guards = self.guards.get_mut();
+            futures::future::join_all(guards.iter().map(|guard| guard.exit()))
+                .await
+                .into_iter()
+                .collect()
+        }
+
+        //noinspection DuplicatedCode
+        async fn clean(&mut self) {
             let mut guards = self.guards.take();
-            futures::future::join_all(guards.iter_mut().map(|guard| guard.exit())).await;
+            futures::future::join_all(guards.iter_mut().map(|guard| guard.clean())).await;
         }
     }
 
@@ -257,12 +277,12 @@ pub(crate) mod client {
         }
     }
 
-    //noinspection DuplicatedCode
+    // noinspection DuplicatedCode
     impl Drop for ProxyInvokeMiddle {
         fn drop(&mut self) {
             futures::executor::block_on(async {
                 let mut ctx = self.ctx.lock().await;
-                ctx.drop_guards().await;
+                ctx.clean().await;
             })
         }
     }
@@ -270,7 +290,7 @@ pub(crate) mod client {
     #[async_trait]
     impl Middle<RunRequest, RunResponse, RunRequest, RunResponse> for ProxyInvokeMiddle {
         //noinspection DuplicatedCode
-        async fn transform_request(&self, run_request: RunRequest) -> RunRequest {
+        async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunRequest> {
             let has_stdout = run_request.stdout.as_ref().map(|_| ());
             let has_stderr = run_request.stderr.as_ref().map(|_| ());
 
@@ -304,18 +324,20 @@ pub(crate) mod client {
                     )
                     .map(|param| ContextStack::wrap_arg(self.ctx.clone(), param)),
             )
-            .await;
+            .await
+            .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
             let cwd = run_request.cwd;
 
-            let to_downloads = n_to_downloads.map(|n_to_downloads| {
-                (0..n_to_downloads)
+            let to_uploads = n_to_uploads.map(|n_to_uploads| {
+                (0..n_to_uploads)
                     .rev()
                     .map(|_| wrapped_args.pop().unwrap())
                     .collect()
             });
-            let to_uploads = n_to_uploads.map(|n_to_uploads| {
-                (0..n_to_uploads)
+            let to_downloads = n_to_downloads.map(|n_to_downloads| {
+                (0..n_to_downloads)
                     .rev()
                     .map(|_| wrapped_args.pop().unwrap())
                     .collect()
@@ -332,7 +354,7 @@ pub(crate) mod client {
             let command = wrapped_args.pop().unwrap();
             let args = wrapped_args;
 
-            RunRequest {
+            Ok(RunRequest {
                 command,
                 args,
                 cwd,
@@ -341,10 +363,14 @@ pub(crate) mod client {
                 to_uploads,
                 stdout,
                 stderr,
-            }
+            })
         }
 
-        async fn transform_response(&self, response: RunResponse) -> RunResponse {
+        async fn transform_response(
+            &self,
+            response: anyhow::Result<RunResponse>,
+        ) -> anyhow::Result<RunResponse> {
+            self.ctx.lock().await.close().await?;
             response
         }
     }
@@ -359,12 +385,15 @@ pub(crate) mod client {
 
     #[async_trait]
     impl Middle<RunRequest, RunResponse, String, String> for PackAndSerializeMiddle {
-        async fn transform_request(&self, request: RunRequest) -> String {
-            serde_json::to_string(&request).unwrap()
+        async fn transform_request(&self, request: RunRequest) -> anyhow::Result<String> {
+            Ok(serde_json::to_string(&request)?)
         }
 
-        async fn transform_response(&self, response: String) -> RunResponse {
-            serde_json::from_str(response.as_str()).unwrap()
+        async fn transform_response(
+            &self,
+            response: anyhow::Result<String>,
+        ) -> anyhow::Result<RunResponse> {
+            Ok(serde_json::from_str(response?.as_str())?)
         }
     }
 }
@@ -404,54 +433,56 @@ pub(crate) mod server {
 
     #[async_trait]
     trait ArgGuard: Send + Sync {
-        async fn enter(&self) -> String;
-        async fn exit(&mut self) {}
+        async fn enter(&self) -> anyhow::Result<String>;
+        async fn exit(&self) -> anyhow::Result<()> {
+            Ok(())
+        }
+        async fn clean(&mut self) {}
     }
 
     #[async_trait]
     impl ArgGuard for StrGuard {
-        async fn enter(&self) -> String {
-            self.value.clone()
+        async fn enter(&self) -> anyhow::Result<String> {
+            Ok(self.value.clone())
         }
     }
 
     #[async_trait]
     impl ArgGuard for EnvGuard {
-        async fn enter(&self) -> String {
-            std::env::var(self.name.as_str()).unwrap()
+        async fn enter(&self) -> anyhow::Result<String> {
+            Ok(std::env::var(self.name.as_str())?)
         }
     }
 
     #[async_trait]
     impl ArgGuard for InCloudFileGuard {
-        async fn enter(&self) -> String {
+        async fn enter(&self) -> anyhow::Result<String> {
             self.param
                 .download(self.bucket.clone(), self.temppath.to_path_buf())
-                .await
-                .unwrap();
+                .await?;
 
-            self.temppath.to_str().unwrap().to_string()
+            Ok(self.temppath.to_str().unwrap().to_string())
         }
     }
 
     #[async_trait]
     impl ArgGuard for OutCloudFileGuard {
-        async fn enter(&self) -> String {
-            self.temppath.to_str().unwrap().to_string()
+        async fn enter(&self) -> anyhow::Result<String> {
+            Ok(self.temppath.to_str().unwrap().to_string())
         }
 
-        async fn exit(&mut self) {
+        async fn exit(&self) -> anyhow::Result<()> {
             self.param
                 .upload(self.bucket.clone(), self.temppath.to_path_buf())
-                .await
-                .unwrap();
+                .await?;
+            Ok(())
         }
     }
 
     #[async_trait]
     impl ArgGuard for FormatGuard {
         //noinspection DuplicatedCode
-        async fn enter(&self) -> String {
+        async fn enter(&self) -> anyhow::Result<String> {
             let args = futures::future::join_all(
                 self.args
                     .values()
@@ -459,11 +490,13 @@ pub(crate) mod server {
             )
             .await
             .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?
+            .into_iter()
             .zip(self.args.keys())
             .map(|(param, name)| (name.clone(), param))
             .collect();
 
-            strfmt(self.tmpl.as_str(), &args).unwrap()
+            Ok(strfmt(self.tmpl.as_str(), &args)?)
         }
     }
 
@@ -474,7 +507,7 @@ pub(crate) mod server {
     }
 
     impl ContextStack {
-        pub async fn wrap_arg(ctx: Arc<Mutex<ContextStack>>, arg: Param) -> String {
+        pub async fn wrap_arg(ctx: Arc<Mutex<ContextStack>>, arg: Param) -> anyhow::Result<String> {
             let bucket = ctx.lock().await.bucket.clone();
             let new_temppath = || async {
                 let tempdir = &ctx.lock().await.tempdir;
@@ -515,9 +548,18 @@ pub(crate) mod server {
         }
 
         //noinspection DuplicatedCode
-        async fn drop_guards(&mut self) {
+        async fn close(&mut self) -> anyhow::Result<Vec<()>> {
+            let guards = self.guards.get_mut();
+            futures::future::join_all(guards.iter().map(|guard| guard.exit()))
+                .await
+                .into_iter()
+                .collect()
+        }
+
+        //noinspection DuplicatedCode
+        async fn clean(&mut self) {
             let mut guards = self.guards.take();
-            futures::future::join_all(guards.iter_mut().map(|guard| guard.exit())).await;
+            futures::future::join_all(guards.iter_mut().map(|guard| guard.clean())).await;
         }
     }
 
@@ -553,15 +595,16 @@ pub(crate) mod server {
         fn drop(&mut self) {
             futures::executor::block_on(async {
                 let mut ctx = self.ctx.lock().await;
-                ctx.drop_guards().await;
+                ctx.clean().await;
             })
         }
     }
 
+    // todo find a way to avoid duplication
     #[async_trait]
     impl Middle<RunRequest, RunResponse, RunSpec, i32> for ProxyInvokeMiddle {
         //noinspection DuplicatedCode
-        async fn transform_request(&self, run_request: RunRequest) -> RunSpec {
+        async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunSpec> {
             let has_stdout = run_request.stdout.as_ref().map(|_| ());
             let has_stderr = run_request.stderr.as_ref().map(|_| ());
 
@@ -595,18 +638,20 @@ pub(crate) mod server {
                     )
                     .map(|param| ContextStack::wrap_arg(self.ctx.clone(), param)),
             )
-            .await;
+            .await
+            .into_iter()
+            .collect::<anyhow::Result<Vec<_>>>()?;
 
             let cwd = run_request.cwd;
 
-            n_to_downloads.map(|n_to_downloads| {
-                (0..n_to_downloads)
+            n_to_uploads.map(|n_to_uploads| {
+                (0..n_to_uploads)
                     .rev()
                     .map(|_| wrapped_args.pop().unwrap())
                     .collect::<Vec<_>>()
             });
-            n_to_uploads.map(|n_to_uploads| {
-                (0..n_to_uploads)
+            n_to_downloads.map(|n_to_downloads| {
+                (0..n_to_downloads)
                     .rev()
                     .map(|_| wrapped_args.pop().unwrap())
                     .collect::<Vec<_>>()
@@ -623,21 +668,25 @@ pub(crate) mod server {
             let command = wrapped_args.pop().unwrap();
             let args = wrapped_args;
 
-            RunSpec {
+            Ok(RunSpec {
                 command,
                 args,
                 cwd,
                 env,
                 stdout,
                 stderr,
-            }
+            })
         }
 
-        async fn transform_response(&self, response: i32) -> RunResponse {
-            RunResponse {
-                return_code: response,
+        async fn transform_response(
+            &self,
+            response: anyhow::Result<i32>,
+        ) -> anyhow::Result<RunResponse> {
+            self.ctx.lock().await.close().await?;
+            Ok(RunResponse {
+                return_code: response?,
                 exc: None,
-            }
+            })
         }
     }
 
@@ -651,12 +700,15 @@ pub(crate) mod server {
 
     #[async_trait]
     impl Middle<String, String, RunRequest, RunResponse> for UnpackAndDeserializeMiddle {
-        async fn transform_request(&self, request: String) -> RunRequest {
-            serde_json::from_str(request.as_str()).unwrap()
+        async fn transform_request(&self, request: String) -> anyhow::Result<RunRequest> {
+            Ok(serde_json::from_str(request.as_str())?)
         }
 
-        async fn transform_response(&self, response: RunResponse) -> String {
-            serde_json::to_string(&response).unwrap()
+        async fn transform_response(
+            &self,
+            response: anyhow::Result<RunResponse>,
+        ) -> anyhow::Result<String> {
+            Ok(serde_json::to_string(&response?)?)
         }
     }
 }
@@ -673,6 +725,8 @@ mod tests {
         use fake::Fake;
         use tempfile::{tempdir, NamedTempFile};
         use test_utilities::docker;
+
+        use crate::protocol::RunResponse;
 
         use super::*;
 
@@ -753,7 +807,7 @@ mod tests {
 
             {
                 let invoke_middle = client::ProxyInvokeMiddle::new(bucket.clone());
-                let wrapped_req = invoke_middle.transform_request(req).await;
+                let wrapped_req = invoke_middle.transform_request(req).await.unwrap();
 
                 assert!(matches!(wrapped_req.command,
                     Param::StrParam { value } if value == "/bin/bash"));
@@ -801,6 +855,15 @@ mod tests {
                         .await
                         .unwrap();
                 }
+
+                let run_response = RunResponse {
+                    return_code: 0,
+                    exc: None,
+                };
+                invoke_middle
+                    .transform_response(Ok(run_response))
+                    .await
+                    .unwrap();
             }
 
             // assert all the inputs have been removed from the cloud
@@ -917,7 +980,7 @@ mod tests {
             {
                 let server_tempdir = tempdir().unwrap();
                 let invoke_middle = server::ProxyInvokeMiddle::new(bucket.clone(), server_tempdir);
-                let run_spec = invoke_middle.transform_request(req).await;
+                let run_spec = invoke_middle.transform_request(req).await.unwrap();
 
                 assert_eq!(run_spec.command, "/bin/bash");
                 assert_eq!(run_spec.args.first().unwrap(), "-c");
@@ -957,6 +1020,12 @@ mod tests {
                 )
                 .unwrap();
                 std::fs::write(run_spec.stderr.unwrap().as_str(), "").unwrap();
+
+                let run_response = 0;
+                invoke_middle
+                    .transform_response(Ok(run_response))
+                    .await
+                    .unwrap();
             }
 
             // assert all the outputs have been uploaded
