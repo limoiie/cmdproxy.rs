@@ -36,6 +36,10 @@ pub struct Cli {
     /// Path to a environment file
     #[arg(short, long)]
     environments: Option<PathBuf>,
+
+    /// Extension queues separated by comma.
+    #[arg(short, long)]
+    ext_queues: Option<String>,
 }
 
 pub async fn app(cli: Cli) -> anyhow::Result<()> {
@@ -77,6 +81,11 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
                     .join("commands-palette.yaml")
             })
         });
+
+    let ext_queues = cli
+        .ext_queues
+        .or_ok(std::env::var("CMDPROXY_EXT_QUEUES"))
+        .unwrap_or_default();
 
     SERVER_CONF
         .set(CmdProxyServerConf::new(CmdProxyServerConfFile {
@@ -121,13 +130,13 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
     )
     .await?;
 
-    // improve: support preset consume queues
     let command_queues: Vec<_> = SERVER_CONF
         .get()
         .unwrap()
         .command_palette
         .keys()
         .map(String::as_str)
+        .chain(ext_queues.split(','))
         .collect();
     assert!(!command_queues.is_empty(), "No queues to be consumed!");
 
