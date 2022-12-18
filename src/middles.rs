@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::future::Future;
 use std::iter;
 use std::sync::Arc;
 
@@ -10,7 +11,9 @@ use tempfile::TempDir;
 use tokio::sync::Mutex;
 
 use crate::params::Param;
-use crate::protocol::RunRequest;
+use crate::protocol::{RunRequest, RunSpecification};
+
+type ArcMtxRefCell<T> = Arc<Mutex<RefCell<T>>>;
 
 #[doc(hidden)]
 #[macro_export]
@@ -99,20 +102,11 @@ pub(crate) mod client {
     struct FormatGuard {
         tmpl: String,
         args: HashMap<String, Param>,
-        ctx: Arc<Mutex<ContextStack>>,
+        ctx: ContextStack,
     }
 
     #[async_trait]
-    trait ArgGuard: Send + Sync {
-        async fn enter(&self) -> anyhow::Result<Param>;
-        async fn exit(&self) -> anyhow::Result<()> {
-            Ok(())
-        }
-        async fn clean(&mut self) {}
-    }
-
-    #[async_trait]
-    impl ArgGuard for StrGuard {
+    impl ArgGuard<Param> for StrGuard {
         async fn enter(&self) -> anyhow::Result<Param> {
             Ok(Param::StrParam {
                 value: self.value.clone(),
@@ -121,7 +115,7 @@ pub(crate) mod client {
     }
 
     #[async_trait]
-    impl ArgGuard for EnvGuard {
+    impl ArgGuard<Param> for EnvGuard {
         async fn enter(&self) -> anyhow::Result<Param> {
             Ok(Param::StrParam {
                 value: std::env::var(self.name.as_str())?,
@@ -130,7 +124,7 @@ pub(crate) mod client {
     }
 
     #[async_trait]
-    impl ArgGuard for RemoteEnvGuard {
+    impl ArgGuard<Param> for RemoteEnvGuard {
         async fn enter(&self) -> anyhow::Result<Param> {
             Ok(Param::EnvParam {
                 name: self.name.clone(),
@@ -139,14 +133,14 @@ pub(crate) mod client {
     }
 
     #[async_trait]
-    impl ArgGuard for InCloudFileGuard {
+    impl ArgGuard<Param> for InCloudFileGuard {
         async fn enter(&self) -> anyhow::Result<Param> {
             Ok(self.param.clone())
         }
     }
 
     #[async_trait]
-    impl ArgGuard for InLocalFileGuard {
+    impl ArgGuard<Param> for InLocalFileGuard {
         async fn enter(&self) -> anyhow::Result<Param> {
             self.param.upload_inplace(self.bucket.clone()).await?;
             Ok(self.param.as_cloud())
@@ -161,14 +155,14 @@ pub(crate) mod client {
     }
 
     #[async_trait]
-    impl ArgGuard for OutCloudFileGuard {
+    impl ArgGuard<Param> for OutCloudFileGuard {
         async fn enter(&self) -> anyhow::Result<Param> {
             Ok(self.param.as_cloud())
         }
     }
 
     #[async_trait]
-    impl ArgGuard for OutLocalFileGuard {
+    impl ArgGuard<Param> for OutLocalFileGuard {
         async fn enter(&self) -> anyhow::Result<Param> {
             Ok(self.param.as_cloud())
         }
@@ -187,46 +181,44 @@ pub(crate) mod client {
     }
 
     #[async_trait]
-    impl ArgGuard for FormatGuard {
-        //noinspection DuplicatedCode
+    impl ArgGuard<Param> for FormatGuard {
         async fn enter(&self) -> anyhow::Result<Param> {
-            let args = futures::future::join_all(
-                self.args
-                    .values()
-                    .map(|param| ContextStack::wrap_arg(self.ctx.clone(), param.clone())),
-            )
-            .await
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?
-            .into_iter()
-            .zip(self.args.keys())
-            .map(|(param, name)| (name.clone(), param))
-            .collect();
-
+            let args = guard_hashmap_args(&self.args, |param| self.ctx.push_guard(param)).await?;
             Ok(Param::FormatParam {
                 tmpl: self.tmpl.clone(),
                 args,
             })
         }
+
+        async fn exit(&self) -> anyhow::Result<()> {
+            self.ctx.close().await.map(|_| ())
+        }
+
+        async fn clean(&mut self) {
+            self.ctx.clean().await
+        }
     }
 
     struct ContextStack {
         bucket: GridFSBucket,
-        guards: RefCell<Vec<Box<dyn ArgGuard>>>,
+        guards: ArcMtxRefCell<Vec<Box<dyn ArgGuard<Param>>>>,
     }
 
-    impl ContextStack {
-        pub async fn wrap_arg(ctx: Arc<Mutex<ContextStack>>, arg: Param) -> anyhow::Result<Param> {
-            let bucket = ctx.lock().await.bucket.clone();
-
-            let guard: Box<dyn ArgGuard> = match arg {
+    #[async_trait]
+    impl ContextStackTrait<Param> for ContextStack {
+        async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<Param>> {
+            let bucket = self.bucket.clone();
+            match param {
                 Param::StrParam { value } => Box::new(StrGuard { value }),
                 Param::EnvParam { name } => Box::new(EnvGuard { name }),
                 Param::RemoteEnvParam { name } => Box::new(RemoteEnvGuard { name }),
                 Param::FormatParam { tmpl, args } => Box::new(FormatGuard {
                     tmpl,
                     args,
-                    ctx: ctx.clone(),
+                    ctx: ContextStack {
+                        bucket: self.bucket.clone(),
+                        guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
+                    },
                 }),
                 param @ Param::InLocalFileParam { .. } => {
                     Box::new(InLocalFileGuard { bucket, param })
@@ -236,141 +228,48 @@ pub(crate) mod client {
                 }
                 param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard { param }),
                 param @ Param::OutCloudFileParam { .. } => Box::new(OutCloudFileGuard { param }),
-            };
-
-            let param = guard.enter().await;
-
-            let mutex = ctx.lock().await;
-            mutex.guards.borrow_mut().push(guard);
-
-            param
+            }
         }
 
-        //noinspection DuplicatedCode
-        async fn close(&mut self) -> anyhow::Result<Vec<()>> {
-            let guards = self.guards.get_mut();
-            futures::future::join_all(guards.iter().map(|guard| guard.exit()))
-                .await
-                .into_iter()
-                .collect()
-        }
-
-        //noinspection DuplicatedCode
-        async fn clean(&mut self) {
-            let mut guards = self.guards.take();
-            futures::future::join_all(guards.iter_mut().map(|guard| guard.clean())).await;
+        fn guards(&self) -> &Arc<Mutex<RefCell<Vec<Box<dyn ArgGuard<Param>>>>>> {
+            &self.guards
         }
     }
 
     pub(crate) struct ProxyInvokeMiddle {
-        ctx: Arc<Mutex<ContextStack>>,
+        ctx: ContextStack,
     }
 
     impl ProxyInvokeMiddle {
         pub fn new(bucket: GridFSBucket) -> ProxyInvokeMiddle {
             ProxyInvokeMiddle {
-                ctx: Arc::new(Mutex::new(ContextStack {
+                ctx: ContextStack {
                     bucket,
-                    guards: RefCell::new(vec![]),
-                })),
+                    guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
+                },
             }
         }
     }
 
-    // noinspection DuplicatedCode
     impl Drop for ProxyInvokeMiddle {
         fn drop(&mut self) {
             futures::executor::block_on(async {
-                let mut ctx = self.ctx.lock().await;
-                ctx.clean().await;
+                self.ctx.clean().await;
             })
         }
     }
 
     #[async_trait]
     impl Middle<RunRequest, RunResponse, RunRequest, RunResponse> for ProxyInvokeMiddle {
-        //noinspection DuplicatedCode
         async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunRequest> {
-            let has_stdout = run_request.stdout.as_ref().map(|_| ());
-            let has_stderr = run_request.stderr.as_ref().map(|_| ());
-
-            let env_keys = run_request
-                .env
-                .as_ref()
-                .map(|m| m.keys().map(Clone::clone).collect::<Vec<_>>());
-
-            let n_to_downloads = run_request.to_downloads.as_ref().map(Vec::len);
-            let n_to_uploads = run_request.to_uploads.as_ref().map(Vec::len);
-
-            let mut wrapped_args = futures::future::join_all(
-                run_request
-                    .args
-                    .into_iter()
-                    .chain(iter::once(run_request.command))
-                    .chain(run_request.stdout.into_iter())
-                    .chain(run_request.stderr.into_iter())
-                    .chain(run_request.env.into_iter().flat_map(|m| m.into_values()))
-                    .chain(
-                        run_request
-                            .to_downloads
-                            .into_iter()
-                            .flat_map(|v| v.into_iter()),
-                    )
-                    .chain(
-                        run_request
-                            .to_uploads
-                            .into_iter()
-                            .flat_map(|v| v.into_iter()),
-                    )
-                    .map(|param| ContextStack::wrap_arg(self.ctx.clone(), param)),
-            )
-            .await
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-            let cwd = run_request.cwd;
-
-            let to_uploads = n_to_uploads.map(|n_to_uploads| {
-                (0..n_to_uploads)
-                    .rev()
-                    .map(|_| wrapped_args.pop().unwrap())
-                    .collect()
-            });
-            let to_downloads = n_to_downloads.map(|n_to_downloads| {
-                (0..n_to_downloads)
-                    .rev()
-                    .map(|_| wrapped_args.pop().unwrap())
-                    .collect()
-            });
-
-            let env = env_keys.map(|keys| {
-                keys.into_iter()
-                    .rev()
-                    .map(|key| (key, wrapped_args.pop().unwrap()))
-                    .collect()
-            });
-            let stderr = has_stderr.and_then(|_| wrapped_args.pop());
-            let stdout = has_stdout.and_then(|_| wrapped_args.pop());
-            let command = wrapped_args.pop().unwrap();
-            let args = wrapped_args;
-
-            Ok(RunRequest {
-                command,
-                args,
-                cwd,
-                env,
-                to_downloads,
-                to_uploads,
-                stdout,
-                stderr,
-            })
+            guard_run_args(run_request, |param| self.ctx.push_guard(param)).await
         }
 
         async fn transform_response(
             &self,
             response: anyhow::Result<RunResponse>,
         ) -> anyhow::Result<RunResponse> {
-            self.ctx.lock().await.close().await?;
+            self.ctx.close().await?;
             response
         }
     }
@@ -410,7 +309,7 @@ pub(crate) mod client {
 pub(crate) mod server {
     use tempfile::TempPath;
 
-    use crate::protocol::RunResponse;
+    use crate::protocol::{RunResponse, RunSpec};
 
     use super::*;
 
@@ -437,34 +336,25 @@ pub(crate) mod server {
     struct FormatGuard {
         tmpl: String,
         args: HashMap<String, Param>,
-        ctx: Arc<Mutex<ContextStack>>,
+        ctx: ContextStack,
     }
 
     #[async_trait]
-    trait ArgGuard: Send + Sync {
-        async fn enter(&self) -> anyhow::Result<String>;
-        async fn exit(&self) -> anyhow::Result<()> {
-            Ok(())
-        }
-        async fn clean(&mut self) {}
-    }
-
-    #[async_trait]
-    impl ArgGuard for StrGuard {
+    impl ArgGuard<String> for StrGuard {
         async fn enter(&self) -> anyhow::Result<String> {
             Ok(self.value.clone())
         }
     }
 
     #[async_trait]
-    impl ArgGuard for EnvGuard {
+    impl ArgGuard<String> for EnvGuard {
         async fn enter(&self) -> anyhow::Result<String> {
             Ok(std::env::var(self.name.as_str())?)
         }
     }
 
     #[async_trait]
-    impl ArgGuard for InCloudFileGuard {
+    impl ArgGuard<String> for InCloudFileGuard {
         async fn enter(&self) -> anyhow::Result<String> {
             self.param
                 .download(self.bucket.clone(), self.temppath.to_path_buf())
@@ -475,7 +365,7 @@ pub(crate) mod server {
     }
 
     #[async_trait]
-    impl ArgGuard for OutCloudFileGuard {
+    impl ArgGuard<String> for OutCloudFileGuard {
         async fn enter(&self) -> anyhow::Result<String> {
             Ok(self.temppath.to_str().unwrap().to_string())
         }
@@ -489,51 +379,50 @@ pub(crate) mod server {
     }
 
     #[async_trait]
-    impl ArgGuard for FormatGuard {
-        //noinspection DuplicatedCode
+    impl ArgGuard<String> for FormatGuard {
         async fn enter(&self) -> anyhow::Result<String> {
-            let args = futures::future::join_all(
-                self.args
-                    .values()
-                    .map(|param| ContextStack::wrap_arg(self.ctx.clone(), param.clone())),
-            )
-            .await
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?
-            .into_iter()
-            .zip(self.args.keys())
-            .map(|(param, name)| (name.clone(), param))
-            .collect();
-
+            let args = guard_hashmap_args(&self.args, |param| self.ctx.push_guard(param)).await?;
             Ok(strfmt(self.tmpl.as_str(), &args)?)
+        }
+
+        async fn exit(&self) -> anyhow::Result<()> {
+            self.ctx.close().await.map(|_| ())
+        }
+
+        async fn clean(&mut self) {
+            self.ctx.clean().await
         }
     }
 
     struct ContextStack {
         tempdir: TempDir,
         bucket: GridFSBucket,
-        guards: RefCell<Vec<Box<dyn ArgGuard>>>,
+        guards: ArcMtxRefCell<Vec<Box<dyn ArgGuard<String>>>>,
     }
 
-    impl ContextStack {
-        pub async fn wrap_arg(ctx: Arc<Mutex<ContextStack>>, arg: Param) -> anyhow::Result<String> {
-            let bucket = ctx.lock().await.bucket.clone();
+    #[async_trait]
+    impl ContextStackTrait<String> for ContextStack {
+        async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<String>> {
+            let bucket = self.bucket.clone();
             let new_temppath = || async {
-                let tempdir = &ctx.lock().await.tempdir;
                 let temppath = tempfile::Builder::new()
-                    .tempfile_in(tempdir.path())
+                    .tempfile_in(self.tempdir.path())
                     .unwrap()
                     .into_temp_path();
                 temppath
             };
 
-            let guard: Box<dyn ArgGuard> = match arg {
+            match param {
                 Param::StrParam { value } => Box::new(StrGuard { value }),
                 Param::EnvParam { name } => Box::new(EnvGuard { name }),
                 Param::FormatParam { tmpl, args } => Box::new(FormatGuard {
                     tmpl,
                     args,
-                    ctx: ctx.clone(),
+                    ctx: ContextStack {
+                        bucket,
+                        tempdir: TempDir::new_in(self.tempdir.path()).unwrap(),
+                        guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
+                    },
                 }),
                 param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard {
                     temppath: new_temppath().await,
@@ -546,152 +435,49 @@ pub(crate) mod server {
                     param,
                 }),
                 param => unreachable!("Unaccepted Param {:#?} for server", param),
-            };
-
-            let param = guard.enter().await;
-
-            let mutex = ctx.lock().await;
-            mutex.guards.borrow_mut().push(guard);
-
-            param
+            }
         }
 
-        //noinspection DuplicatedCode
-        async fn close(&mut self) -> anyhow::Result<Vec<()>> {
-            let guards = self.guards.get_mut();
-            futures::future::join_all(guards.iter().map(|guard| guard.exit()))
-                .await
-                .into_iter()
-                .collect()
+        fn guards(&self) -> &ArcMtxRefCell<Vec<Box<dyn ArgGuard<String>>>> {
+            &self.guards
         }
-
-        //noinspection DuplicatedCode
-        async fn clean(&mut self) {
-            let mut guards = self.guards.take();
-            futures::future::join_all(guards.iter_mut().map(|guard| guard.clean())).await;
-        }
-    }
-
-    #[derive(Debug)]
-    pub(crate) struct RunSpec {
-        pub(crate) command: String,
-        pub(crate) args: Vec<String>,
-        pub(crate) cwd: Option<String>,
-        pub(crate) env: Option<HashMap<String, String>>,
-        pub(crate) stdout: Option<String>,
-        pub(crate) stderr: Option<String>,
     }
 
     pub(crate) struct ProxyInvokeMiddle {
-        ctx: Arc<Mutex<ContextStack>>,
+        ctx: ContextStack,
     }
 
-    //noinspection DuplicatedCode
     impl ProxyInvokeMiddle {
         pub(crate) fn new(bucket: GridFSBucket, tempdir: TempDir) -> ProxyInvokeMiddle {
             ProxyInvokeMiddle {
-                ctx: Arc::new(Mutex::new(ContextStack {
+                ctx: ContextStack {
                     tempdir,
                     bucket,
-                    guards: RefCell::new(vec![]),
-                })),
+                    guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
+                },
             }
         }
     }
 
-    //noinspection DuplicatedCode
     impl Drop for ProxyInvokeMiddle {
         fn drop(&mut self) {
             futures::executor::block_on(async {
-                let mut ctx = self.ctx.lock().await;
-                ctx.clean().await;
+                self.ctx.clean().await;
             })
         }
     }
 
-    // todo find a way to avoid duplication
     #[async_trait]
     impl Middle<RunRequest, RunResponse, RunSpec, i32> for ProxyInvokeMiddle {
-        //noinspection DuplicatedCode
         async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunSpec> {
-            let has_stdout = run_request.stdout.as_ref().map(|_| ());
-            let has_stderr = run_request.stderr.as_ref().map(|_| ());
-
-            let env_keys = run_request
-                .env
-                .as_ref()
-                .map(|m| m.keys().map(Clone::clone).collect::<Vec<_>>());
-
-            let n_to_downloads = run_request.to_downloads.as_ref().map(Vec::len);
-            let n_to_uploads = run_request.to_uploads.as_ref().map(Vec::len);
-
-            let mut wrapped_args = futures::future::join_all(
-                run_request
-                    .args
-                    .into_iter()
-                    .chain(iter::once(run_request.command))
-                    .chain(run_request.stdout.into_iter())
-                    .chain(run_request.stderr.into_iter())
-                    .chain(run_request.env.into_iter().flat_map(|m| m.into_values()))
-                    .chain(
-                        run_request
-                            .to_downloads
-                            .into_iter()
-                            .flat_map(|v| v.into_iter()),
-                    )
-                    .chain(
-                        run_request
-                            .to_uploads
-                            .into_iter()
-                            .flat_map(|v| v.into_iter()),
-                    )
-                    .map(|param| ContextStack::wrap_arg(self.ctx.clone(), param)),
-            )
-            .await
-            .into_iter()
-            .collect::<anyhow::Result<Vec<_>>>()?;
-
-            let cwd = run_request.cwd;
-
-            n_to_uploads.map(|n_to_uploads| {
-                (0..n_to_uploads)
-                    .rev()
-                    .map(|_| wrapped_args.pop().unwrap())
-                    .collect::<Vec<_>>()
-            });
-            n_to_downloads.map(|n_to_downloads| {
-                (0..n_to_downloads)
-                    .rev()
-                    .map(|_| wrapped_args.pop().unwrap())
-                    .collect::<Vec<_>>()
-            });
-
-            let env = env_keys.map(|keys| {
-                keys.into_iter()
-                    .rev()
-                    .map(|key| (key, wrapped_args.pop().unwrap()))
-                    .collect()
-            });
-            let stderr = has_stderr.and_then(|_| wrapped_args.pop());
-            let stdout = has_stdout.and_then(|_| wrapped_args.pop());
-            let command = wrapped_args.pop().unwrap();
-            let args = wrapped_args;
-
-            Ok(RunSpec {
-                command,
-                args,
-                cwd,
-                env,
-                stdout,
-                stderr,
-            })
+            guard_run_args(run_request, |param| self.ctx.push_guard(param)).await
         }
 
         async fn transform_response(
             &self,
             response: anyhow::Result<i32>,
         ) -> anyhow::Result<RunResponse> {
-            self.ctx.lock().await.close().await?;
+            self.ctx.close().await?;
             Ok(RunResponse {
                 return_code: response?,
                 exc: None,
@@ -727,6 +513,154 @@ pub(crate) mod server {
             Ok(serde_json::to_string(&response)?)
         }
     }
+}
+
+#[async_trait]
+trait ArgGuard<P>: Send + Sync {
+    async fn enter(&self) -> anyhow::Result<P>;
+    async fn exit(&self) -> anyhow::Result<()> {
+        Ok(())
+    }
+    async fn clean(&mut self) {}
+}
+
+#[async_trait]
+trait ContextStackTrait<P>: Send + Sync
+where
+    P: Send + Sync,
+{
+    async fn push_guard(&self, arg: Param) -> anyhow::Result<P> {
+        let guard = self.guard_param(arg).await;
+        let param = guard.enter().await;
+        let guards = self.guards().lock().await;
+        guards.borrow_mut().push(guard);
+        param
+    }
+
+    async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<P>>;
+
+    fn guards(&self) -> &ArcMtxRefCell<Vec<Box<dyn ArgGuard<P>>>>;
+
+    async fn close(&self) -> anyhow::Result<Vec<()>> {
+        let mut guards = self.guards().lock().await;
+        let guards = guards.get_mut();
+        futures::future::join_all(guards.iter().map(|guard| guard.exit()))
+            .await
+            .into_iter()
+            .collect()
+    }
+
+    async fn clean(&mut self) {
+        let guards = self.guards().lock().await;
+        let mut guards = guards.take();
+        futures::future::join_all(guards.iter_mut().map(|guard| guard.clean())).await;
+    }
+}
+
+async fn guard_hashmap_args<P, F, Fut>(
+    args: &HashMap<String, Param>,
+    fn_guard: F,
+) -> anyhow::Result<HashMap<String, P>>
+where
+    F: FnMut(Param) -> Fut,
+    Fut: Future<Output = anyhow::Result<P>>,
+{
+    let args = args
+        .keys()
+        .map(Clone::clone)
+        .zip(
+            futures::future::join_all(args.values().map(Clone::clone).map(fn_guard))
+                .await
+                .into_iter()
+                .collect::<anyhow::Result<Vec<_>>>()?
+                .into_iter(),
+        )
+        .collect();
+
+    Ok(args)
+}
+
+async fn guard_run_args<P, F, Fut>(
+    run_request: RunRequest,
+    fn_guard: F,
+) -> anyhow::Result<RunSpecification<P>>
+where
+    F: FnMut(Param) -> Fut,
+    Fut: Future<Output = anyhow::Result<P>>,
+{
+    let has_stdout = run_request.stdout.as_ref().map(|_| ());
+    let has_stderr = run_request.stderr.as_ref().map(|_| ());
+
+    let env_keys = run_request
+        .env
+        .as_ref()
+        .map(|m| m.keys().map(Clone::clone).collect::<Vec<_>>());
+
+    let n_to_downloads = run_request.to_downloads.as_ref().map(Vec::len);
+    let n_to_uploads = run_request.to_uploads.as_ref().map(Vec::len);
+
+    let mut wrapped_args = futures::future::join_all(
+        run_request
+            .args
+            .into_iter()
+            .chain(iter::once(run_request.command))
+            .chain(run_request.stdout.into_iter())
+            .chain(run_request.stderr.into_iter())
+            .chain(run_request.env.into_iter().flat_map(|m| m.into_values()))
+            .chain(
+                run_request
+                    .to_downloads
+                    .into_iter()
+                    .flat_map(|v| v.into_iter()),
+            )
+            .chain(
+                run_request
+                    .to_uploads
+                    .into_iter()
+                    .flat_map(|v| v.into_iter()),
+            )
+            .map(fn_guard),
+    )
+    .await
+    .into_iter()
+    .collect::<anyhow::Result<Vec<_>>>()?;
+
+    let cwd = run_request.cwd;
+
+    let to_uploads = n_to_uploads.map(|n_to_uploads| {
+        (0..n_to_uploads)
+            .rev()
+            .map(|_| wrapped_args.pop().unwrap())
+            .collect()
+    });
+    let to_downloads = n_to_downloads.map(|n_to_downloads| {
+        (0..n_to_downloads)
+            .rev()
+            .map(|_| wrapped_args.pop().unwrap())
+            .collect()
+    });
+
+    let env = env_keys.map(|keys| {
+        keys.into_iter()
+            .rev()
+            .map(|key| (key, wrapped_args.pop().unwrap()))
+            .collect()
+    });
+    let stderr = has_stderr.and_then(|_| wrapped_args.pop());
+    let stdout = has_stdout.and_then(|_| wrapped_args.pop());
+    let command = wrapped_args.pop().unwrap();
+    let args = wrapped_args;
+
+    Ok(RunSpecification::<P> {
+        command,
+        args,
+        cwd,
+        env,
+        to_downloads,
+        to_uploads,
+        stdout,
+        stderr,
+    })
 }
 
 #[cfg(test)]

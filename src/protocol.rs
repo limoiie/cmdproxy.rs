@@ -1,25 +1,30 @@
-use crate::params::Param;
-use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+
+use serde::{Deserialize, Serialize};
 use typed_builder::TypedBuilder;
 
+use crate::params::Param;
+
 #[derive(Debug, Clone, Serialize, Deserialize, TypedBuilder)]
-pub struct RunRequest {
-    pub command: Param,
-    pub args: Vec<Param>,
+pub struct RunSpecification<P> {
+    pub command: P,
+    pub args: Vec<P>,
     #[builder(default, setter(strip_option))]
     pub cwd: Option<String>,
     #[builder(default, setter(strip_option))]
-    pub env: Option<HashMap<String, Param>>,
+    pub env: Option<HashMap<String, P>>,
     #[builder(default, setter(strip_option))]
-    pub to_downloads: Option<Vec<Param>>,
+    pub to_downloads: Option<Vec<P>>,
     #[builder(default, setter(strip_option))]
-    pub to_uploads: Option<Vec<Param>>,
+    pub to_uploads: Option<Vec<P>>,
     #[builder(default, setter(strip_option))]
-    pub stdout: Option<Param>,
+    pub stdout: Option<P>,
     #[builder(default, setter(strip_option))]
-    pub stderr: Option<Param>,
+    pub stderr: Option<P>,
 }
+
+pub type RunRequest = RunSpecification<Param>;
+pub(crate) type RunSpec = RunSpecification<String>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunResponse {

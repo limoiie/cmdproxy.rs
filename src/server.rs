@@ -6,8 +6,8 @@ use tempfile::tempdir;
 
 use crate::apply_middles;
 use crate::configs::CmdProxyServerConf;
-use crate::middles::server::RunSpec;
 use crate::middles::{server, Middle};
+use crate::protocol::RunSpec;
 
 pub struct Server {
     conf: CmdProxyServerConf,
