@@ -38,7 +38,7 @@ macro_rules! __apply_middles_in_stack {
 macro_rules! apply_middles {
     (
         $init:expr,
-        $( >=< $middles:expr, )+
+        $( >=< [$middles:expr] )+
         >>= $func:ident
     ) => {
         $crate::__apply_middles_in_stack!( $init, $func, [ $( $middles ),* ] )
@@ -393,7 +393,16 @@ pub(crate) mod client {
             &self,
             response: anyhow::Result<String>,
         ) -> anyhow::Result<RunResponse> {
-            Ok(serde_json::from_str(response?.as_str())?)
+            let response: RunResponse = serde_json::from_str(response?.as_str())?;
+            if response.exc.is_some() {
+                anyhow::bail!(
+                    "Server Error: return code {}, {}",
+                    response.return_code,
+                    response.exc.unwrap()
+                )
+            } else {
+                Ok(response)
+            }
         }
     }
 }
@@ -708,7 +717,14 @@ pub(crate) mod server {
             &self,
             response: anyhow::Result<RunResponse>,
         ) -> anyhow::Result<String> {
-            Ok(serde_json::to_string(&response?)?)
+            let response = match response {
+                Ok(response) => response,
+                Err(err) => RunResponse {
+                    return_code: -1,
+                    exc: Some(err.to_string()),
+                },
+            };
+            Ok(serde_json::to_string(&response)?)
         }
     }
 }

@@ -49,11 +49,10 @@ impl Server {
 
         let res = apply_middles!(
             serialized_run_request,
-            >=< server::UnpackAndDeserializeMiddle::new(),
-            >=< server::ProxyInvokeMiddle::new(bucket, workspace),
+            >=< [ server::UnpackAndDeserializeMiddle::new() ]
+            >=< [ server::ProxyInvokeMiddle::new(bucket, workspace) ]
             >>= real_run
         );
-        // todo: find a place to embedding the error into serialized response
-        res.unwrap()
+        res.expect("Unreachable: please embedding all the errors into serialization!")
     }
 }

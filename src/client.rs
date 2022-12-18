@@ -53,8 +53,8 @@ impl Client {
 
         let res = apply_middles!(
             run_request,
-            >=< client::ProxyInvokeMiddle::new(bucket),
-            >=< client::PackAndSerializeMiddle::new(),
+            >=< [ client::ProxyInvokeMiddle::new(bucket) ]
+            >=< [ client::PackAndSerializeMiddle::new() ]
             >>= proxy_run
         );
         res.map(|r| r.return_code)
