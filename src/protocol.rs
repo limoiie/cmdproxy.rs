@@ -24,7 +24,7 @@ pub struct RunSpecification<P> {
 }
 
 pub type RunRequest = RunSpecification<Param>;
-pub(crate) type RunSpec = RunSpecification<String>;
+pub(crate) type RunRecipe = RunSpecification<String>;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RunResponse {

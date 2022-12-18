@@ -13,7 +13,7 @@ use crate::middles::invoke::{
 };
 use crate::middles::Middle;
 use crate::params::Param;
-use crate::protocol::{RunRequest, RunResponse, RunSpec};
+use crate::protocol::{RunRecipe, RunRequest, RunResponse};
 
 struct StrGuard {
     value: String,
@@ -170,8 +170,8 @@ impl Drop for MiddleImpl {
 }
 
 #[async_trait]
-impl Middle<RunRequest, RunResponse, RunSpec, i32> for MiddleImpl {
-    async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunSpec> {
+impl Middle<RunRequest, RunResponse, RunRecipe, i32> for MiddleImpl {
+    async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunRecipe> {
         guard_run_args(run_request, |param| self.ctx.push_guard(param)).await
     }
 

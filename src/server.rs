@@ -7,7 +7,7 @@ use tempfile::tempdir;
 use crate::apply_middles;
 use crate::configs::CmdProxyServerConf;
 use crate::middles::{invoke, serde, Middle};
-use crate::protocol::RunSpec;
+use crate::protocol::RunRecipe;
 
 pub struct Server {
     conf: CmdProxyServerConf,
@@ -22,7 +22,7 @@ impl Server {
         let workspace = tempdir().unwrap();
         let bucket = self.conf.cloud.grid_fs().await;
 
-        let real_run = |run_spec: RunSpec| async move {
+        let real_run = |run_spec: RunRecipe| async move {
             debug!("Running command with spec as:\n{:#?}", run_spec);
 
             let stdout = run_spec

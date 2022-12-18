@@ -3,10 +3,10 @@ use celery::export::async_trait;
 use crate::middles::Middle;
 use crate::protocol::{RunRequest, RunResponse};
 
-pub struct MiddleImpl {}
+pub(crate) struct MiddleImpl {}
 
 impl MiddleImpl {
-    pub fn new() -> MiddleImpl {
+    pub(crate) fn new() -> MiddleImpl {
         MiddleImpl {}
     }
 }
