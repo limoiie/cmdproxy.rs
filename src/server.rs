@@ -6,7 +6,7 @@ use tempfile::tempdir;
 
 use crate::apply_middles;
 use crate::configs::CmdProxyServerConf;
-use crate::middles::{server, Middle};
+use crate::middles::{invoke, serde, Middle};
 use crate::protocol::RunSpec;
 
 pub struct Server {
@@ -49,8 +49,8 @@ impl Server {
 
         let res = apply_middles!(
             serialized_run_request,
-            >=< [ server::UnpackAndDeserializeMiddle::new() ]
-            >=< [ server::ProxyInvokeMiddle::new(bucket, workspace) ]
+            >=< [ serde::server_end::MiddleImpl::new() ]
+            >=< [ invoke::server_end::MiddleImpl::new(bucket, workspace) ]
             >>= real_run
         );
         res.expect("Unreachable: please embedding all the errors into serialization!")

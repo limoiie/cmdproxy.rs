@@ -10,7 +10,7 @@ use log::debug;
 
 use crate::apply_middles;
 use crate::configs::CmdProxyClientConf;
-use crate::middles::{client, Middle};
+use crate::middles::{invoke, serde, Middle};
 use crate::params::Param;
 use crate::protocol::RunRequest;
 use crate::tasks::run;
@@ -53,8 +53,8 @@ impl Client {
 
         let res = apply_middles!(
             run_request,
-            >=< [ client::ProxyInvokeMiddle::new(bucket) ]
-            >=< [ client::PackAndSerializeMiddle::new() ]
+            >=< [ invoke::client_end::MiddleImpl::new(bucket) ]
+            >=< [ serde::client_end::MiddleImpl::new() ]
             >>= proxy_run
         );
         res.map(|r| r.return_code)
