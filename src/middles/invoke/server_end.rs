@@ -242,7 +242,7 @@ mod tests {
         };
 
         let req = RunRequest::builder()
-            .command(Param::str("/bin/bash"))
+            .command(Param::str("/bin/sh"))
             .args(vec![
                 Param::str("-c"),
                 Param::format(
@@ -286,7 +286,7 @@ mod tests {
             let invoke_middle = MiddleImpl::new(bucket.clone(), server_tempdir);
             let run_spec = invoke_middle.transform_request(req).await.unwrap();
 
-            assert_eq!(run_spec.command, "/bin/bash");
+            assert_eq!(run_spec.command, "/bin/sh");
             assert_eq!(run_spec.args.first().unwrap(), "-c");
 
             let pat =

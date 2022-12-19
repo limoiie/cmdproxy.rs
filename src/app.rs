@@ -137,6 +137,7 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
         .keys()
         .map(String::as_str)
         .chain(ext_queues.split(','))
+        .filter(|queue| !queue.is_empty())
         .collect();
     assert!(!command_queues.is_empty(), "No queues to be consumed!");
 

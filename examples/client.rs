@@ -44,7 +44,7 @@ async fn main() {
     let conf = parse_client_conf();
 
     let req = RunRequest::builder()
-        .command(Param::str("/bin/bash"))
+        .command(Param::str("/bin/sh"))
         .args(vec![
             Param::str("-c"),
             Param::format(

@@ -273,7 +273,7 @@ mod tests {
         };
 
         let req = RunRequest::builder()
-            .command(Param::str("/bin/bash"))
+            .command(Param::str("/bin/sh"))
             .args(vec![
                 Param::str("-c"),
                 Param::format(
@@ -309,7 +309,7 @@ mod tests {
             let wrapped_req = invoke_middle.transform_request(req).await.unwrap();
 
             assert!(matches!(wrapped_req.command,
-                    Param::StrParam { value } if value == "/bin/bash"));
+                    Param::StrParam { value } if value == "/bin/sh"));
             assert!(matches!(
                 wrapped_req.args.first().unwrap(),
                 Param::StrParam { value } if value == "-c"
