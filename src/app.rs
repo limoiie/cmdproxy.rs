@@ -68,7 +68,7 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
     let mongodb_name = cli
         .mongodb_name
         .or_ok(std::env::var("CMDPROXY_MONGODB_NAME"))
-        .or_wrap("testdb".to_owned())
+        .or_wrap("cmdproxy-db".to_owned())
         .unwrap();
 
     let command_palette = cli

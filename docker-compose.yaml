@@ -11,7 +11,7 @@ services:
     ports:
       - "27017:27017"
     environment:
-      - MONGO_INITDB_DATABASE=cmdproxy-testdb
+      - MONGO_INITDB_DATABASE=cmdproxy-db
 
   broker:
     image: redis:latest
@@ -32,27 +32,27 @@ services:
       - overlay
     environment:
       - CMDPROXY_LOGLEVEL=TRACE
-      - CMDPROXY_MONGODB_NAME=cmdproxy-testdb
+      - CMDPROXY_MONGODB_NAME=cmdproxy-db
       - CMDPROXY_MONGO_URL=mongodb://backend:27017
       - CMDPROXY_REDIS_URL=redis://broker:6379
 
-# todo: use the cmdproxy.py
-#  py-client:
-#    build:
-#      context: .
-#      dockerfile: ./examples/Dockerfile.client-py
-#    image: cmdproxy-example-client-py:0.2.2
-#    container_name: cmdproxy-client
-#    depends_on:
-#      - backend
-#      - broker
-#    networks:
-#      - overlay
-#    environment:
-#      - CMDPROXY_MONGODB_NAME=cmdproxy-testdb
-#      - CMDPROXY_MONGO_URL=mongodb://backend:27017
-#      - CMDPROXY_REDIS_URL=redis://broker:6379
-#    profiles: ["py-client"]
+  py-client:
+    build:
+      context: .
+      dockerfile: ./examples/Dockerfile.client-py
+    # todo: correct tag
+    image: cmdproxy.rs/examples/client-py:0.2.2
+    container_name: cmdproxy-client
+    depends_on:
+      - backend
+      - broker
+    networks:
+      - overlay
+    environment:
+      - CMDPROXY_MONGODB_NAME=cmdproxy-db
+      - CMDPROXY_MONGO_URL=mongodb://backend:27017
+      - CMDPROXY_REDIS_URL=redis://broker:6379
+    profiles: ["py-client"]
 
   rs-client:
     build:
@@ -66,8 +66,8 @@ services:
     networks:
       - overlay
     environment:
-      - CMDPROXY_RUST_LOG=TRACE
-      - CMDPROXY_MONGODB_NAME=cmdproxy-testdb
+      - CMDPROXY_LOGLEVEL=TRACE
+      - CMDPROXY_MONGODB_NAME=cmdproxy-db
       - CMDPROXY_MONGO_URL=mongodb://backend:27017
       - CMDPROXY_REDIS_URL=redis://broker:6379
     profiles: ["rs-client"]
