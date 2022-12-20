@@ -2,8 +2,8 @@ FROM python:3.9
 
 WORKDIR /home/projects/cmdproxy
 
-COPY ./examples examples
+RUN git clone https://www.github.com/limoiie/cmdproxy.py.git@0.0.1 /home/projects/cmdproxy
 
-RUN pip install --no-cache-dir -r ./examples/requirements.txt 
+RUN python -m pip install .
 
 CMD ["python", "./examples/client.py"]
