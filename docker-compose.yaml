@@ -31,7 +31,7 @@ services:
     networks:
       - overlay
     environment:
-      - CMDPROXY_RUST_LOG=TRACE
+      - CMDPROXY_LOGLEVEL=TRACE
       - CMDPROXY_MONGODB_NAME=cmdproxy-testdb
       - CMDPROXY_MONGO_URL=mongodb://backend:27017
       - CMDPROXY_REDIS_URL=redis://broker:6379

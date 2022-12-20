@@ -27,7 +27,7 @@ pub struct Cli {
 
     /// Log level
     #[arg(short, long)]
-    log: Option<String>,
+    loglevel: Option<String>,
 
     /// Path to a command palette file mapping program name to their paths
     #[arg(short, long)]
@@ -45,8 +45,8 @@ pub struct Cli {
 pub async fn app(cli: Cli) -> anyhow::Result<()> {
     env_logger::Builder::new()
         .parse_filters(
-            cli.log
-                .or_ok(std::env::var("CMDPROXY_RUST_LOG"))
+            cli.loglevel
+                .or_ok(std::env::var("CMDPROXY_LOGLEVEL"))
                 .or_wrap("info".into())
                 .unwrap()
                 .as_str(),
