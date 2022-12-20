@@ -38,7 +38,7 @@ pub struct Cli {
     environments: Option<PathBuf>,
 
     /// Extension queues separated by comma.
-    #[arg(short, long)]
+    #[arg(long)]
     ext_queues: Option<String>,
 }
 
@@ -95,6 +95,13 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
             command_palette,
         }))
         .unwrap();
+    // insert command palette into environ, so that we can resolve command path via EnvParam
+    SERVER_CONF
+        .get()
+        .unwrap()
+        .command_palette
+        .iter()
+        .for_each(|(key, val)| std::env::set_var(key, val));
 
     cli.environments
         .or_ok(std::env::var("CMDPROXY_ENVIRONMENTS").map(PathBuf::from))
@@ -109,11 +116,6 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
                     .de_yaml::<HashMap<String, String>>()
                     .unwrap()
                     .iter()
-                    .chain(
-                        // also insert command palette into environment variables, so that we can
-                        // resolve command path via EnvParam
-                        SERVER_CONF.get().unwrap().command_palette.iter(),
-                    )
                     .for_each(|(key, val)| std::env::set_var(key, val));
             }
         })
