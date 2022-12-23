@@ -6,6 +6,7 @@ use chain_ext::io::DeExt;
 use chain_ext::option::OptionExt;
 use clap::Parser;
 use directories::UserDirs;
+use log::debug;
 
 use crate::configs::{CmdProxyServerConf, CmdProxyServerConfFile};
 use crate::tasks::{run, SERVER_CONF};
@@ -95,11 +96,12 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
             command_palette,
         }))
         .unwrap();
+
+    let conf = SERVER_CONF.get().unwrap();
+    debug!("Server config:\n{:#?}", conf);
+
     // insert command palette into environ, so that we can resolve command path via EnvParam
-    SERVER_CONF
-        .get()
-        .unwrap()
-        .command_palette
+    conf.command_palette
         .iter()
         .for_each(|(key, val)| std::env::set_var(key, val));
 
@@ -122,8 +124,8 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
         .unwrap_or_default();
 
     let app = celery::app!(
-        broker = RedisBroker { SERVER_CONF.get().unwrap().celery.broker_url },
-        backend = MongoDbBackend { SERVER_CONF.get().unwrap().celery.backend_url },
+        broker = RedisBroker { conf.celery.broker_url },
+        backend = MongoDbBackend { conf.celery.backend_url },
         tasks = [run],
         task_routes = [
             // this bin will only run in server mode, hence no task needs to be routed

@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use celery::export::async_trait;
+use log::debug;
 use mongodb_gridfs::GridFSBucket;
 use strfmt::strfmt;
 use tempfile::{TempDir, TempPath};
@@ -58,6 +59,11 @@ impl ArgGuard<String> for EnvGuard {
 #[async_trait]
 impl ArgGuard<String> for InCloudFileGuard {
     async fn enter(&self) -> anyhow::Result<String> {
+        debug!(
+            "Download cloud input {} to {}...",
+            self.param.cloud_url(),
+            self.temppath.to_str().unwrap(),
+        );
         self.param
             .download(self.bucket.clone(), self.temppath.to_path_buf())
             .await?;
@@ -76,6 +82,11 @@ impl ArgGuard<String> for OutCloudFileGuard {
         self.param
             .upload(self.bucket.clone(), self.temppath.to_path_buf())
             .await?;
+        debug!(
+            "Upload local output {} to {}...",
+            self.temppath.to_str().unwrap(),
+            self.param.cloud_url(),
+        );
         Ok(())
     }
 }

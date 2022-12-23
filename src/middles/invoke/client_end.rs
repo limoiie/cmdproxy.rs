@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use celery::export::async_trait;
+use log::debug;
 use mongodb_gridfs::GridFSBucket;
 use tokio::sync::Mutex;
 
@@ -86,6 +87,11 @@ impl ArgGuard<Param> for InCloudFileGuard {
 #[async_trait]
 impl ArgGuard<Param> for InLocalFileGuard {
     async fn enter(&self) -> anyhow::Result<Param> {
+        debug!(
+            "Upload local input {} to {}...",
+            self.param.filepath(),
+            self.param.cloud_url(),
+        );
         self.param.upload_inplace(self.bucket.clone()).await?;
         Ok(self.param.as_cloud())
     }
@@ -112,6 +118,11 @@ impl ArgGuard<Param> for OutLocalFileGuard {
     }
 
     async fn exit(&self) -> anyhow::Result<()> {
+        debug!(
+            "Download cloud output {} to {}...",
+            self.param.cloud_url(),
+            self.param.filepath()
+        );
         self.param.download_inplace(self.bucket.clone()).await?;
         Ok(())
     }
