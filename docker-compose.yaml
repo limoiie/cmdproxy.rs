@@ -23,7 +23,7 @@ services:
     
   cmdproxy:
     build: .
-    image: cmdproxy.rs:volatile
+    image: cmdproxy.rs:${CMDPROXY_VERSION}
     container_name: cmdproxy-server
     depends_on:
       - backend
@@ -40,8 +40,7 @@ services:
     build:
       context: .
       dockerfile: ./examples/Dockerfile.client-py
-    # todo: correct tag
-    image: cmdproxy.rs/examples/client-py:0.2.2
+    image: cmdproxy.rs/examples/client-py:${CMDPROXY_VERSION}
     container_name: cmdproxy-client
     depends_on:
       - backend
@@ -58,7 +57,7 @@ services:
     build:
       context: .
       dockerfile: ./examples/Dockerfile.client-rs
-    image: cmdproxy-example-client-rs:0.2.2
+    image: cmdproxy.rs/examples/client-rs:${CMDPROXY_VERSION}
     container_name: cmdproxy-client
     depends_on:
       - backend
