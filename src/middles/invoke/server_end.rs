@@ -2,6 +2,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use celery::export::async_trait;
 use log::debug;
 use mongodb_gridfs::GridFSBucket;
@@ -22,6 +23,15 @@ struct StrGuard {
 
 struct EnvGuard {
     name: String,
+}
+
+struct CmdNameGuard {
+    name: String,
+    conf: Arc<Mutex<Config>>,
+}
+
+struct CmdPathGuard {
+    path: String,
 }
 
 struct InCloudFileGuard {
@@ -53,6 +63,29 @@ impl ArgGuard<String> for StrGuard {
 impl ArgGuard<String> for EnvGuard {
     async fn enter(&self) -> anyhow::Result<String> {
         Ok(std::env::var(self.name.as_str())?)
+    }
+}
+
+#[async_trait]
+impl ArgGuard<String> for CmdNameGuard {
+    async fn enter(&self) -> anyhow::Result<String> {
+        let command_palette = &self.conf.lock().await.command_palette;
+        if let Some(command) = command_palette.get(self.name.as_str()) {
+            Ok(command.clone())
+        } else {
+            Err(anyhow!(
+                "Command `{}' not found in command-palette:{:#?}\n",
+                self.name,
+                command_palette
+            ))
+        }
+    }
+}
+
+#[async_trait]
+impl ArgGuard<String> for CmdPathGuard {
+    async fn enter(&self) -> anyhow::Result<String> {
+        Ok(self.path.clone())
     }
 }
 
@@ -111,6 +144,7 @@ struct ContextStack {
     tempdir: TempDir,
     bucket: GridFSBucket,
     guards: ArcMtxRefCell<Vec<Box<dyn ArgGuard<String>>>>,
+    conf: Arc<Mutex<Config>>,
 }
 
 #[async_trait]
@@ -128,6 +162,11 @@ impl GuardStack<String> for ContextStack {
         match param {
             Param::StrParam { value } => Box::new(StrGuard { value }),
             Param::EnvParam { name } => Box::new(EnvGuard { name }),
+            Param::CmdNameParam { name } => Box::new(CmdNameGuard {
+                name,
+                conf: self.conf.clone(),
+            }),
+            Param::CmdPathParam { path } => Box::new(CmdPathGuard { path }),
             Param::FormatParam { tmpl, args } => Box::new(FormatGuard {
                 tmpl,
                 args,
@@ -135,6 +174,7 @@ impl GuardStack<String> for ContextStack {
                     bucket,
                     tempdir: TempDir::new_in(self.tempdir.path()).unwrap(),
                     guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
+                    conf: self.conf.clone(),
                 },
             }),
             param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard {
@@ -156,17 +196,22 @@ impl GuardStack<String> for ContextStack {
     }
 }
 
+pub(crate) struct Config {
+    pub(crate) command_palette: HashMap<String, String>,
+}
+
 pub(crate) struct MiddleImpl {
     ctx: ContextStack,
 }
 
 impl MiddleImpl {
-    pub(crate) fn new(bucket: GridFSBucket, tempdir: TempDir) -> MiddleImpl {
+    pub(crate) fn new(bucket: GridFSBucket, tempdir: TempDir, conf: Config) -> MiddleImpl {
         MiddleImpl {
             ctx: ContextStack {
                 tempdir,
                 bucket,
                 guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
+                conf: Arc::new(Mutex::new(conf)),
             },
         }
     }
@@ -234,6 +279,9 @@ mod tests {
 
         let fake_input_content = (30..50).fake::<String>();
         let fake_stdout_content = (30..50).fake::<String>();
+        let conf = Config {
+            command_palette: HashMap::<String, String>::new(),
+        };
 
         fake_input.write_all(fake_input_content.as_bytes()).unwrap();
 
@@ -294,7 +342,7 @@ mod tests {
 
         {
             let server_tempdir = tempdir().unwrap();
-            let invoke_middle = MiddleImpl::new(bucket.clone(), server_tempdir);
+            let invoke_middle = MiddleImpl::new(bucket.clone(), server_tempdir, conf);
             let run_spec = invoke_middle.transform_request(req).await.unwrap();
 
             assert_eq!(run_spec.command, "/bin/sh");

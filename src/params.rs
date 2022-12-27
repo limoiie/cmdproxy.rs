@@ -19,6 +19,12 @@ pub enum Param {
     RemoteEnvParam {
         name: String,
     },
+    CmdNameParam {
+        name: String,
+    },
+    CmdPathParam {
+        path: String,
+    },
     InLocalFileParam {
         filepath: String,
         hostname: String,
@@ -69,6 +75,18 @@ impl Param {
     pub fn remote_env<S: AsRef<str>>(name: S) -> Param {
         Param::RemoteEnvParam {
             name: name.as_ref().to_string(),
+        }
+    }
+
+    pub fn cmd_name<S: AsRef<str>>(name: S) -> Param {
+        Param::CmdNameParam {
+            name: name.as_ref().to_string(),
+        }
+    }
+
+    pub fn cmd_path<S: AsRef<str>>(path: S) -> Param {
+        Param::CmdPathParam {
+            path: path.as_ref().to_string(),
         }
     }
 

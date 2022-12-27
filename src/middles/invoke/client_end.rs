@@ -26,6 +26,14 @@ struct RemoteEnvGuard {
     name: String,
 }
 
+struct CmdNameGuard {
+    name: String,
+}
+
+struct CmdPathGuard {
+    path: String,
+}
+
 struct InCloudFileGuard {
     param: Param,
 }
@@ -73,6 +81,24 @@ impl ArgGuard<Param> for RemoteEnvGuard {
     async fn enter(&self) -> anyhow::Result<Param> {
         Ok(Param::EnvParam {
             name: self.name.clone(),
+        })
+    }
+}
+
+#[async_trait]
+impl ArgGuard<Param> for CmdNameGuard {
+    async fn enter(&self) -> anyhow::Result<Param> {
+        Ok(Param::CmdNameParam {
+            name: self.name.clone(),
+        })
+    }
+}
+
+#[async_trait]
+impl ArgGuard<Param> for CmdPathGuard {
+    async fn enter(&self) -> anyhow::Result<Param> {
+        Ok(Param::CmdPathParam {
+            path: self.path.clone(),
         })
     }
 }
@@ -167,6 +193,8 @@ impl GuardStack<Param> for ContextStack {
             Param::StrParam { value } => Box::new(StrGuard { value }),
             Param::EnvParam { name } => Box::new(EnvGuard { name }),
             Param::RemoteEnvParam { name } => Box::new(RemoteEnvGuard { name }),
+            Param::CmdNameParam { name } => Box::new(CmdNameGuard { name }),
+            Param::CmdPathParam { path } => Box::new(CmdPathGuard { path }),
             Param::FormatParam { tmpl, args } => Box::new(FormatGuard {
                 tmpl,
                 args,

@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use celery::backend::MongoDbBackend;
 use celery::broker::RedisBroker;
 use celery::prelude::*;
@@ -35,14 +36,21 @@ impl Client {
     }
 
     pub async fn run(&self, run_request: RunRequest, queue: Option<String>) -> anyhow::Result<i32> {
+        let queue = match &run_request.command {
+            Param::CmdNameParam { name } => queue.unwrap_or_else(|| name.clone()),
+            Param::CmdPathParam { .. } => queue.ok_or_else(|| {
+                anyhow!("Queue should be specified when command is instance of CmdPathParam")
+            })?,
+            param => {
+                return Err(anyhow!(
+                    "Expect command in type of CmdNameParam or CmdPathParam, got {:#?}",
+                    param
+                ))
+            }
+        };
+
         let app = self.app.clone();
         let bucket = self.conf.cloud.grid_fs().await;
-        let queue = queue
-            .or_else(|| match &run_request.command {
-                Param::EnvParam { name } => Some(name.clone()),
-                _ => None,
-            })
-            .expect("You must either explicitly specify the queue, or wrap command as EnvParam!");
 
         let proxy_run = |serialized: String| async {
             debug!("Sending RunRequest to queue `{queue}'...");

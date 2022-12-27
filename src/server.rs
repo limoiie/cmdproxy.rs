@@ -18,7 +18,7 @@ impl Server {
         Server { conf }
     }
 
-    pub(crate) async fn run(&self, serialized_run_request: String) -> String {
+    pub(crate) async fn run(self, serialized_run_request: String) -> String {
         let workspace = tempdir().unwrap();
         let bucket = self.conf.cloud.grid_fs().await;
 
@@ -47,10 +47,13 @@ impl Server {
             Ok(st?.code().unwrap_or(0))
         };
 
+        let conf = invoke::server_end::Config {
+            command_palette: self.conf.command_palette,
+        };
         let res = apply_middles!(
             serialized_run_request,
             >=< [ serde::server_end::MiddleImpl::new() ]
-            >=< [ invoke::server_end::MiddleImpl::new(bucket, workspace) ]
+            >=< [ invoke::server_end::MiddleImpl::new(bucket, workspace, conf) ]
             >>= real_run
         );
         res.expect("Unreachable: please embedding all the errors into serialization!")
