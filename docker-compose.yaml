@@ -32,7 +32,7 @@ services:
       - overlay
     environment:
       - CMDPROXY_LOGLEVEL=TRACE
-      - CMDPROXY_MONGODB_NAME=cmdproxy-db
+      - CMDPROXY_MONGO_DBNAME=cmdproxy-db
       - CMDPROXY_MONGO_URL=mongodb://backend:27017
       - CMDPROXY_REDIS_URL=redis://broker:6379
 
@@ -48,7 +48,7 @@ services:
     networks:
       - overlay
     environment:
-      - CMDPROXY_MONGODB_NAME=cmdproxy-db
+      - CMDPROXY_MONGO_DBNAME=cmdproxy-db
       - CMDPROXY_MONGO_URL=mongodb://backend:27017
       - CMDPROXY_REDIS_URL=redis://broker:6379
     profiles: ["py-client"]
@@ -66,7 +66,7 @@ services:
       - overlay
     environment:
       - CMDPROXY_LOGLEVEL=TRACE
-      - CMDPROXY_MONGODB_NAME=cmdproxy-db
+      - CMDPROXY_MONGO_DBNAME=cmdproxy-db
       - CMDPROXY_MONGO_URL=mongodb://backend:27017
       - CMDPROXY_REDIS_URL=redis://broker:6379
     profiles: ["rs-client"]

@@ -24,7 +24,7 @@ pub struct Cli {
 
     /// Name of database where stores the remote-fs
     #[arg(long)]
-    mongodb_name: Option<String>,
+    mongo_dbname: Option<String>,
 
     /// Log level
     #[arg(short, long)]
@@ -66,9 +66,9 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
         .or_wrap("mongodb://localhost:27017/".into())
         .unwrap();
 
-    let mongodb_name = cli
-        .mongodb_name
-        .or_ok(std::env::var("CMDPROXY_MONGODB_NAME"))
+    let mongo_dbname = cli
+        .mongo_dbname
+        .or_ok(std::env::var("CMDPROXY_MONGO_DBNAME"))
         .or_wrap("cmdproxy-db".to_owned())
         .unwrap();
 
@@ -92,7 +92,7 @@ pub async fn app(cli: Cli) -> anyhow::Result<()> {
         .set(CmdProxyServerConf::new(CmdProxyServerConfFile {
             redis_url,
             mongo_url,
-            mongodb_name,
+            mongo_dbname,
             command_palette,
         }))
         .unwrap();

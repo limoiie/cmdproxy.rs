@@ -14,19 +14,19 @@ pub struct CeleryConf {
 
 #[derive(Clone, Debug)]
 pub struct CloudFSConf {
-    pub mongodb_url: String,
-    pub mongodb_name: String,
+    pub mongo_url: String,
+    pub mongo_dbname: String,
 }
 
 impl CloudFSConf {
     pub(crate) async fn client(&self) -> mongodb::Client {
-        mongodb::Client::with_uri_str(self.mongodb_url.as_str())
+        mongodb::Client::with_uri_str(self.mongo_url.as_str())
             .await
             .unwrap()
     }
 
     pub(crate) async fn db(&self) -> mongodb::Database {
-        self.client().await.database(self.mongodb_name.as_str())
+        self.client().await.database(self.mongo_dbname.as_str())
     }
 
     pub(crate) async fn grid_fs(&self) -> GridFSBucket {
@@ -38,14 +38,14 @@ impl CloudFSConf {
 pub struct CmdProxyClientConfFile {
     pub redis_url: String,
     pub mongo_url: String,
-    pub mongodb_name: String,
+    pub mongo_dbname: String,
 }
 
 #[derive(Debug, Default, Serialize, Deserialize)]
 pub struct CmdProxyServerConfFile {
     pub redis_url: String,
     pub mongo_url: String,
-    pub mongodb_name: String,
+    pub mongo_dbname: String,
     pub command_palette: Option<PathBuf>,
 }
 
@@ -62,8 +62,8 @@ impl CmdProxyClientConf {
                 backend_url: conf.mongo_url.clone(),
             },
             cloud: CloudFSConf {
-                mongodb_url: conf.mongo_url,
-                mongodb_name: conf.mongodb_name,
+                mongo_url: conf.mongo_url,
+                mongo_dbname: conf.mongo_dbname,
             },
         }
     }
@@ -103,8 +103,8 @@ impl CmdProxyServerConf {
                 backend_url: conf.mongo_url.clone(),
             },
             cloud: CloudFSConf {
-                mongodb_url: conf.mongo_url,
-                mongodb_name: conf.mongodb_name,
+                mongo_url: conf.mongo_url,
+                mongo_dbname: conf.mongo_dbname,
             },
             command_palette,
             command_palette_path: conf.command_palette,

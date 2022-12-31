@@ -23,7 +23,7 @@ pub struct Cli {
 
     /// Name of database where stores the remote-fs
     #[arg(long)]
-    mongodb_name: Option<String>,
+    mongo_dbname: Option<String>,
 }
 
 #[tokio::main]
@@ -101,21 +101,21 @@ fn parse_client_conf() -> CmdProxyClientConf {
         .or_wrap("mongodb://localhost:27017/".to_owned())
         .unwrap();
 
-    let mongodb_name = cli
-        .mongodb_name
-        .or_ok(std::env::var("CMDPROXY_MONGODB_NAME"))
+    let mongo_dbname = cli
+        .mongo_dbname
+        .or_ok(std::env::var("CMDPROXY_MONGO_DBNAME"))
         .or_wrap("cmdproxy-db".to_owned())
         .unwrap();
 
     let conf = CmdProxyClientConf::new(CmdProxyClientConfFile {
         redis_url: redis_url.clone(),
         mongo_url: mongo_url.clone(),
-        mongodb_name: mongodb_name.clone(),
+        mongo_dbname: mongo_dbname.clone(),
     });
 
     println!("redis run on: {}", redis_url);
     println!("mongo run on: {}", mongo_url);
-    println!("mongo dbname: {}", mongodb_name);
+    println!("mongo dbname: {}", mongo_dbname);
 
     conf
 }
