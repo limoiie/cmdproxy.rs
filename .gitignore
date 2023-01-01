@@ -3,6 +3,7 @@
 /target
 /vendor
 Cargo.lock
+.cargo
 
 /.idea
 /.vscode
