@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::path::Path;
 use std::sync::Arc;
 
 use anyhow::anyhow;
@@ -151,8 +152,13 @@ struct ContextStack {
 impl GuardStack<String> for ContextStack {
     async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<String>> {
         let bucket = self.bucket.clone();
-        let new_temppath = || async {
+        let new_temppath = |filepath: String| async move {
+            let filename = Path::new(filepath.as_str())
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .unwrap_or("");
             let temppath = tempfile::Builder::new()
+                .suffix(filename)
                 .tempfile_in(self.tempdir.path())
                 .unwrap()
                 .into_temp_path();
@@ -178,12 +184,12 @@ impl GuardStack<String> for ContextStack {
                 },
             }),
             param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard {
-                temppath: new_temppath().await,
+                temppath: new_temppath(param.filepath().to_string()).await,
                 bucket,
                 param,
             }),
             param @ Param::OutCloudFileParam { .. } => Box::new(OutCloudFileGuard {
-                temppath: new_temppath().await,
+                temppath: new_temppath(param.filepath().to_string()).await,
                 bucket,
                 param,
             }),
