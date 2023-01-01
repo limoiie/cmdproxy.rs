@@ -1,9 +1,8 @@
 FROM python:3.9
 
 WORKDIR /home/projects/cmdproxy
+COPY ./examples examples
 
-RUN git clone https://www.github.com/limoiie/cmdproxy.py.git@0.0.1 /home/projects/cmdproxy
-
-RUN python -m pip install .
+RUN python -m pip install git+https://github.com/limoiie/cmdproxy.py.git@v0.0.2
 
 CMD ["python", "./examples/client.py"]
