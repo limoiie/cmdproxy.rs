@@ -32,11 +32,6 @@ jobs:
     name: Test Suite
     runs-on: ubuntu-latest
     steps:
-      - name: something
-        run: |
-          container_id=`docker run --rm -d -p 0:27017 --name cmdproxy-test-server mongo:latest`
-          docker port ${container_id} 27017
-
       - name: Checkout sources
         uses: actions/checkout@v2
 
