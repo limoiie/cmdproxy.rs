@@ -42,6 +42,11 @@ jobs:
           toolchain: stable
           override: true
 
+      - name: Pull necessary docker images
+        run: |
+          docker pull mongo:latest
+          docker pull redis:latest
+
       - name: Run cargo test
         uses: actions-rs/cargo@v1
         with:
