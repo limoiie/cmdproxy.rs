@@ -80,3 +80,26 @@ jobs:
         with:
           command: clippy
           args: -- -D warnings
+
+  examples:
+    name: Run examples
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+    env:
+      CMDPROXY_VERSION: volatile
+
+    steps:
+      - uses: actions/checkout@v3
+      - name: Launch cmdproxy server and underline databases
+        run: |
+          docker compose up -d
+      - name: Run cmdproxy rust client
+        run: |
+          docker compose run --rm rs-client
+      - name: Run cmdproxy python client
+        run: |
+          docker compose run --rm py-client
+      - name: Shutdown cmdproxy server and underline databases
+        run: |
+          docker compose down
