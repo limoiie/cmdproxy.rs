@@ -1,0 +1,25 @@
+[source.crates-io]
+replace-with = "vendored-sources"
+
+[source."https://github.com/limoiie/chain-ext.rs"]
+git = "https://github.com/limoiie/chain-ext.rs"
+tag = "v0.2.1"
+replace-with = "vendored-sources"
+
+[source."https://github.com/limoiie/mongodb-gridfs-ext.rs"]
+git = "https://github.com/limoiie/mongodb-gridfs-ext.rs"
+tag = "v0.1.0"
+replace-with = "vendored-sources"
+
+[source."https://github.com/limoiie/rusty-celery"]
+git = "https://github.com/limoiie/rusty-celery"
+tag = "v0.4.0-rcn.12.1"
+replace-with = "vendored-sources"
+
+[source."https://github.com/limoiie/test-utilities.rs"]
+git = "https://github.com/limoiie/test-utilities.rs"
+tag = "v0.2.0"
+replace-with = "vendored-sources"
+
+[source.vendored-sources]
+directory = "vendor"
