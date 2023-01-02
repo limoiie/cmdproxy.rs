@@ -273,11 +273,11 @@ mod tests {
     async fn test_invoke_middle() {
         let container = docker::Builder::new("mongo")
             .name("cmdproxy-test-client")
-            .port_mapping(0, Some(27017))
+            .bind_port_as_default(Some("0"), "27017")
             .build_disposable()
             .await;
 
-        let bucket = mongodb::Client::with_uri_str(container.url.as_ref().unwrap())
+        let bucket = mongodb::Client::with_uri_str(container.url())
             .await
             .unwrap()
             .database("cmdproxy-test-client-db")
