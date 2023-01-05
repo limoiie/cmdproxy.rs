@@ -13,7 +13,7 @@ replace-with = "vendored-sources"
 
 [source."https://github.com/limoiie/rusty-celery"]
 git = "https://github.com/limoiie/rusty-celery"
-tag = "v0.4.0-rcn.12.1"
+tag = "v0.4.0-rcn.12.2"
 replace-with = "vendored-sources"
 
 [source."https://github.com/limoiie/test-utilities.rs"]
