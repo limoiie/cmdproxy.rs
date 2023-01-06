@@ -1,8 +1,14 @@
+ARG VS_VERSION
 ARG RUST_VERSION
 
-FROM rust:${RUST_VERSION}
+FROM rust/windows-msvc:vs-${VS_VERSION}-rust-${RUST_VERSION}
 
-WORKDIR /home/projects/cmdproxy
+SHELL ["powershell", "-Command", "$ErrorActionPreference = 'Stop'; $ProgressPreference = 'SilentlyContinue';"]
+
+ENV USER_HOME=C:\\Users\\ContainerAdministrator
+ENV CMDPROXY_HOME=${USER_HOME}\\cmdproxy
+
+WORKDIR ${CMDPROXY_HOME}
 RUN cargo init
 
 COPY ./.cargo .cargo
