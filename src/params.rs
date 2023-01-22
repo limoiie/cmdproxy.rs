@@ -2,6 +2,7 @@ use std::io::Read;
 use std::path::Path;
 use std::{collections::HashMap, io::Write};
 
+use chrono::{Datelike, Timelike};
 use mongodb::bson::oid::ObjectId;
 use mongodb_gridfs::options::GridFSUploadOptions;
 use mongodb_gridfs::GridFSBucket;
@@ -274,20 +275,20 @@ where
     let mut archive = zip::ZipArchive::new(src)?;
     for i in 0..archive.len() {
         let mut file = archive.by_index(i)?;
-        let outpath = match file.enclosed_name() {
+        let out_path = match file.enclosed_name() {
             Some(path) => dst.join(path),
             None => continue,
         };
 
         if file.name().ends_with('/') {
-            std::fs::create_dir_all(outpath).unwrap();
+            std::fs::create_dir_all(out_path).unwrap();
         } else {
-            if let Some(outdir) = outpath.parent() {
+            if let Some(outdir) = out_path.parent() {
                 if !outdir.exists() {
                     std::fs::create_dir_all(outdir).unwrap()
                 }
             }
-            let mut outfile = std::fs::File::create(&outpath).unwrap();
+            let mut outfile = std::fs::File::create(&out_path).unwrap();
             std::io::copy(&mut file, &mut outfile).unwrap();
         }
 
@@ -299,15 +300,27 @@ where
 fn zip_dir<P: AsRef<Path>>(src: P, dst: P) -> zip::result::ZipResult<()> {
     let dst = std::fs::File::create(dst.as_ref()).unwrap();
     let mut zip = zip::ZipWriter::new(dst);
-    let options = FileOptions::default();
     for entry in WalkDir::new(src.as_ref()) {
         let entry = entry.unwrap();
         let path = entry.path();
+        let metadata = path.metadata().unwrap();
+        let mtime: chrono::DateTime<chrono::Local> =
+            chrono::DateTime::from(metadata.modified().unwrap());
+        let mtime = zip::DateTime::from_date_and_time(
+            mtime.year() as u16,
+            mtime.month() as u8,
+            mtime.day() as u8,
+            mtime.hour() as u8,
+            mtime.minute() as u8,
+            mtime.second() as u8,
+        )
+        .unwrap();
+        let options = FileOptions::default().last_modified_time(mtime);
         let name = path.strip_prefix(src.as_ref()).unwrap().to_str().unwrap();
         if path.is_file() {
             zip.start_file(name, options)?;
-            let buffer = std::fs::read_to_string(path).unwrap();
-            zip.write_all(buffer.as_bytes())?;
+            let buffer = std::fs::read(path).unwrap();
+            zip.write_all(buffer.as_slice())?;
         } else if path.is_dir() {
             if path == src.as_ref() {
                 continue;
@@ -328,8 +341,8 @@ mod tests {
         use std::io::Write;
 
         use chain_ext::mongodb_gridfs::DatabaseExt;
+        use chain_ext::path::file_ext::FileExt;
         use fake::Fake;
-        use tempfile::tempdir;
         use test_utilities::docker;
 
         use super::*;
@@ -353,7 +366,7 @@ mod tests {
 
         #[tokio::test]
         async fn test_upload_download() {
-            let workspace = tempdir().unwrap();
+            let workspace = tempfile::tempdir().unwrap();
 
             let container = docker::Builder::new("mongo")
                 .name("cmdproxy-test-params")

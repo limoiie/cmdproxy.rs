@@ -10,6 +10,7 @@ anyhow = "1.0"
 celery = { git = "https://github.com/limoiie/rusty-celery", tag = "v0.4.0-rcn.12.2" }
 chain_ext = { git = "https://github.com/limoiie/chain-ext.rs", tag = "v0.2.1" }
 clap = { version = "4.0.10", features = ["derive"] }
+chrono = "0.4.22"
 directories = "4.0.1"
 env_logger = "0.10.0"
 futures = "0.3.24"
@@ -33,5 +34,6 @@ zip = "0.6.3"
 
 [dev-dependencies]
 fake = "2.5.0"
+folder_compare = "0.4.0"
 rand = "0.8.5"
 test-utilities = { git = "https://github.com/limoiie/test-utilities.rs", tag = "v0.1.2" }
