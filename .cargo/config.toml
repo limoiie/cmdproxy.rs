@@ -8,7 +8,7 @@ replace-with = "vendored-sources"
 
 [source."https://github.com/limoiie/mongodb-gridfs-ext.rs"]
 git = "https://github.com/limoiie/mongodb-gridfs-ext.rs"
-tag = "v0.1.3"
+tag = "v0.1.4"
 replace-with = "vendored-sources"
 
 [source."https://github.com/limoiie/rusty-celery"]

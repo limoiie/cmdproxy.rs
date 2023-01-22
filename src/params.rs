@@ -1,15 +1,16 @@
 use std::io::Read;
 use std::path::Path;
 use std::{collections::HashMap, io::Write};
-use walkdir::WalkDir;
-use zip::{self, write::FileOptions};
 
 use mongodb::bson::oid::ObjectId;
+use mongodb_gridfs::options::GridFSUploadOptions;
 use mongodb_gridfs::GridFSBucket;
 use mongodb_gridfs_ext::bucket::common::GridFSBucketExt;
 use mongodb_gridfs_ext::bucket::file_sync::FileSync;
 use mongodb_gridfs_ext::error::Result as GridFSExtResult;
 use serde::{Deserialize, Serialize};
+use walkdir::WalkDir;
+use zip::{self, write::FileOptions};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Param {
@@ -202,19 +203,18 @@ impl Param {
             .download_to(self.cloud_url().as_str(), tmp_file.path())
             .await?;
 
-        let content_type = bucket
-            .find_one_by_id(oid)
-            .await
-            .map(|doc| doc.get_str("content_type").unwrap().to_owned())?;
-        if content_type != "application/directory+zip" {
-            let (_, tmp_path) = tmp_file.keep().unwrap();
-            std::fs::rename(tmp_path, path)?;
-            return Ok(oid);
+        let doc = bucket.find_one_by_id(oid).await?;
+        match doc.get_str("content_type") {
+            Ok("application/directory+zip") => {
+                unzip_all(tmp_file, path).unwrap();
+                Ok(oid)
+            }
+            _ => {
+                let (_, tmp_path) = tmp_file.keep().unwrap();
+                std::fs::rename(tmp_path, path)?;
+                Ok(oid)
+            }
         }
-
-        unzip_all(tmp_file, path).unwrap();
-
-        Ok(oid)
     }
 
     pub async fn upload(
@@ -222,16 +222,21 @@ impl Param {
         mut bucket: GridFSBucket,
         filepath: impl AsRef<Path> + Send,
     ) -> GridFSExtResult<ObjectId> {
-        let path = filepath.as_ref();
-        if path.is_dir() {
-            let tmp_file = tempfile::NamedTempFile::new()?;
-            zip_dir(path, tmp_file.path()).unwrap();
+        let filepath = filepath.as_ref();
+        if filepath.is_dir() {
+            let options = GridFSUploadOptions::builder()
+                .content_type(Some("application/directory+zip".to_owned()))
+                .build();
+            let zip_file = tempfile::NamedTempFile::new()?;
+            zip_dir(filepath, zip_file.path()).unwrap();
+
             return bucket
-                .upload_from(self.cloud_url().as_str(), tmp_file.path())
+                .upload_from(self.cloud_url().as_str(), zip_file.path(), Some(options))
                 .await;
         }
+
         bucket
-            .upload_from(self.cloud_url().as_str(), filepath)
+            .upload_from(self.cloud_url().as_str(), filepath, None)
             .await
     }
 

@@ -18,7 +18,7 @@ lazy_static = "1.4.0"
 log = "0.4.17"
 mongodb = { version = "2.3.1", features = ["tokio-sync"] }
 mongodb-gridfs = "0.2.2"
-mongodb-gridfs-ext = { git = "https://github.com/limoiie/mongodb-gridfs-ext.rs", tag = "v0.1.3" }
+mongodb-gridfs-ext = { git = "https://github.com/limoiie/mongodb-gridfs-ext.rs", tag = "v0.1.4" }
 once_cell = "1.15.0"
 regex = "1.6.0"
 serde = { version = "1.0", features = ["derive"] }
