@@ -417,5 +417,46 @@ mod tests {
                 std::fs::read_to_string(fake_filepath.as_str()).unwrap()
             );
         }
+
+        #[test]
+        fn test_zip_dir() {
+            let workspace = tempfile::tempdir().unwrap();
+            let tmp_zip_file = tempfile::NamedTempFile::new_in(workspace.path()).unwrap();
+            let tmp_zip_path = tmp_zip_file.path();
+
+            let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let resources_dir = project_root.join("resources/test");
+            let expected_zip_path = resources_dir.join("fake_folder.zip");
+            let fake_folder_path = resources_dir.join("fake_folder");
+
+            zip_dir(fake_folder_path.as_path(), tmp_zip_path).unwrap();
+
+            assert_eq!(
+                std::fs::read(tmp_zip_path).unwrap(),
+                std::fs::read(expected_zip_path.as_path()).unwrap()
+            )
+        }
+
+        #[test]
+        fn test_unzip_all() {
+            let workspace = tempfile::tempdir().unwrap();
+
+            let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let resources_dir = project_root.join("resources/test");
+            let expected_zip_path = resources_dir.join("fake_folder.zip");
+            let fake_folder_path = resources_dir.join("fake_folder");
+
+            let zip_file = expected_zip_path.open().unwrap();
+            unzip_all(zip_file, workspace.path()).unwrap();
+
+            let res = folder_compare::FolderCompare::new(
+                fake_folder_path.as_path(),
+                workspace.path(),
+                &vec![],
+            )
+            .unwrap();
+            assert!(res.changed_files.is_empty());
+            assert!(res.new_files.is_empty());
+        }
     }
 }
