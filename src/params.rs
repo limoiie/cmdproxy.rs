@@ -1,5 +1,8 @@
-use std::collections::HashMap;
+use std::io::Read;
 use std::path::Path;
+use std::{collections::HashMap, io::Write};
+use walkdir::WalkDir;
+use zip::{self, write::FileOptions};
 
 use mongodb::bson::oid::ObjectId;
 use mongodb_gridfs::GridFSBucket;
@@ -190,9 +193,28 @@ impl Param {
         bucket: GridFSBucket,
         filepath: impl AsRef<Path> + Send + Sync,
     ) -> GridFSExtResult<ObjectId> {
-        bucket
-            .download_to(self.cloud_url().as_str(), filepath)
+        let path = filepath.as_ref();
+        let tmp_file = tempfile::Builder::new()
+            .prefix(path.file_name().unwrap())
+            .suffix(".parts")
+            .tempfile_in(path.parent().unwrap())?;
+        let oid = bucket
+            .download_to(self.cloud_url().as_str(), tmp_file.path())
+            .await?;
+
+        let content_type = bucket
+            .find_one_by_id(oid)
             .await
+            .map(|doc| doc.get_str("content_type").unwrap().to_owned())?;
+        if content_type != "application/directory+zip" {
+            let (_, tmp_path) = tmp_file.keep().unwrap();
+            std::fs::rename(tmp_path, path)?;
+            return Ok(oid);
+        }
+
+        unzip_all(tmp_file, path).unwrap();
+
+        Ok(oid)
     }
 
     pub async fn upload(
@@ -200,6 +222,14 @@ impl Param {
         mut bucket: GridFSBucket,
         filepath: impl AsRef<Path> + Send,
     ) -> GridFSExtResult<ObjectId> {
+        let path = filepath.as_ref();
+        if path.is_dir() {
+            let tmp_file = tempfile::NamedTempFile::new()?;
+            zip_dir(path, tmp_file.path()).unwrap();
+            return bucket
+                .upload_from(self.cloud_url().as_str(), tmp_file.path())
+                .await;
+        }
         bucket
             .upload_from(self.cloud_url().as_str(), filepath)
             .await
@@ -228,6 +258,60 @@ impl Param {
             .write_string(self.cloud_url().as_str(), content.as_ref())
             .await
     }
+}
+
+fn unzip_all<R, P>(src: R, dst: P) -> zip::result::ZipResult<()>
+where
+    R: Read + std::io::Seek,
+    P: AsRef<Path>,
+{
+    let dst = dst.as_ref();
+    let mut archive = zip::ZipArchive::new(src)?;
+    for i in 0..archive.len() {
+        let mut file = archive.by_index(i)?;
+        let outpath = match file.enclosed_name() {
+            Some(path) => dst.join(path),
+            None => continue,
+        };
+
+        if file.name().ends_with('/') {
+            std::fs::create_dir_all(outpath).unwrap();
+        } else {
+            if let Some(outdir) = outpath.parent() {
+                if !outdir.exists() {
+                    std::fs::create_dir_all(outdir).unwrap()
+                }
+            }
+            let mut outfile = std::fs::File::create(&outpath).unwrap();
+            std::io::copy(&mut file, &mut outfile).unwrap();
+        }
+
+        // Get and set permissions
+    }
+    Ok(())
+}
+
+fn zip_dir<P: AsRef<Path>>(src: P, dst: P) -> zip::result::ZipResult<()> {
+    let dst = std::fs::File::create(dst.as_ref()).unwrap();
+    let mut zip = zip::ZipWriter::new(dst);
+    let options = FileOptions::default();
+    for entry in WalkDir::new(src.as_ref()) {
+        let entry = entry.unwrap();
+        let path = entry.path();
+        let name = path.strip_prefix(src.as_ref()).unwrap().to_str().unwrap();
+        if path.is_file() {
+            zip.start_file(name, options)?;
+            let buffer = std::fs::read_to_string(path).unwrap();
+            zip.write_all(buffer.as_bytes())?;
+        } else if path.is_dir() {
+            if path == src.as_ref() {
+                continue;
+            }
+            zip.add_directory(name, options)?;
+        }
+    }
+    zip.finish()?;
+    Ok(())
 }
 
 #[cfg(test)]
