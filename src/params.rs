@@ -457,5 +457,63 @@ mod tests {
             assert!(res.changed_files.is_empty());
             assert!(res.new_files.is_empty());
         }
+
+        #[tokio::test]
+        async fn test_upload_download_directory() {
+            let workspace = tempfile::tempdir().unwrap();
+
+            let container = docker::Builder::new("mongo")
+                .name("cmdproxy-test-params-upload-download-dir")
+                .bind_port_as_default(Some("0"), "27017")
+                .build_disposable()
+                .await;
+
+            let bucket = mongodb::Client::with_uri_str(container.url())
+                .await
+                .unwrap()
+                .database("cmdproxy-test-params-db")
+                .bucket(None);
+
+            let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let resources_dir = project_root.join("resources/test");
+            let expected_zip_path = resources_dir.join("fake_folder.zip");
+            let fake_folder_path = resources_dir.join("fake_folder");
+
+            let param = Param::ipath(fake_folder_path.to_str().unwrap());
+            let uploaded_id = param
+                .upload(bucket.clone(), fake_folder_path.to_str().unwrap())
+                .await
+                .unwrap();
+
+            let content_on_cloud = bucket
+                .clone()
+                .read_bytes(param.cloud_url().as_str())
+                .await
+                .unwrap();
+
+            // assert upload
+            assert_eq!(
+                content_on_cloud,
+                std::fs::read(expected_zip_path.to_str().unwrap()).unwrap()
+            );
+
+            let downloaded_path = workspace.path();
+            let downloaded_id = param
+                .download(bucket.clone(), downloaded_path)
+                .await
+                .unwrap();
+
+            // assert download
+            assert_eq!(uploaded_id, downloaded_id);
+
+            let res = folder_compare::FolderCompare::new(
+                downloaded_path,
+                fake_folder_path.as_path(),
+                &vec![],
+            )
+            .unwrap();
+            assert!(res.changed_files.is_empty());
+            assert!(res.new_files.is_empty());
+        }
     }
 }
