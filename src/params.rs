@@ -340,7 +340,6 @@ mod tests {
         use std::io::Write;
 
         use chain_ext::mongodb_gridfs::DatabaseExt;
-        use chain_ext::path::file_ext::FileExt;
         use fake::Fake;
         use test_utilities::docker;
 
@@ -469,26 +468,16 @@ mod tests {
                 .unwrap();
 
             // download the uploaded directory as a zip file, and unzip it for checking identity
-            let uploaded_zip_file = tempfile::NamedTempFile::new_in(workspace.path()).unwrap();
+            let uploaded_zip_path = tempfile::NamedTempFile::new_in(workspace.path()).unwrap();
             let download_unzip_path = tempfile::tempdir_in(workspace.path()).unwrap();
             bucket
                 .clone()
-                .download_to(param.cloud_url().as_str(), uploaded_zip_file.path())
+                .download_to(param.cloud_url().as_str(), uploaded_zip_path.path())
                 .await
                 .unwrap();
 
-            let metadata = std::fs::metadata(uploaded_zip_file.path()).unwrap();
-            println!(
-                "Metadata of downloaded zip {:#?} is {:#?}",
-                uploaded_zip_file.path(),
-                metadata
-            );
-
-            unzip_all(
-                uploaded_zip_file.open().unwrap(),
-                download_unzip_path.path(),
-            )
-            .unwrap();
+            tokio::time::sleep(core::time::Duration::from_secs(1)).await;
+            unzip_all(uploaded_zip_path.as_file(), download_unzip_path.path()).unwrap();
 
             // assert upload
             let res = folder_compare::FolderCompare::new(
