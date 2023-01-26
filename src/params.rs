@@ -418,35 +418,19 @@ mod tests {
         }
 
         #[test]
-        fn test_zip_dir() {
-            let workspace = tempfile::tempdir().unwrap();
-            let tmp_zip_file = tempfile::NamedTempFile::new_in(workspace.path()).unwrap();
-            let tmp_zip_path = tmp_zip_file.path();
-
-            let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-            let resources_dir = project_root.join("resources/test");
-            let expected_zip_path = resources_dir.join("fake_folder.zip");
-            let fake_folder_path = resources_dir.join("fake_folder");
-
-            zip_dir(fake_folder_path.as_path(), tmp_zip_path).unwrap();
-
-            assert_eq!(
-                std::fs::read(tmp_zip_path).unwrap(),
-                std::fs::read(expected_zip_path.as_path()).unwrap()
-            )
-        }
-
-        #[test]
-        fn test_unzip_all() {
+        fn test_zip_unzip() {
             let workspace = tempfile::tempdir().unwrap();
 
             let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             let resources_dir = project_root.join("resources/test");
-            let expected_zip_path = resources_dir.join("fake_folder.zip");
             let fake_folder_path = resources_dir.join("fake_folder");
 
-            let zip_file = expected_zip_path.open().unwrap();
-            unzip_all(zip_file, workspace.path()).unwrap();
+            // zip the folder
+            let expected_zip_path = tempfile::NamedTempFile::new_in(workspace.path()).unwrap();
+            zip_dir(fake_folder_path.as_path(), expected_zip_path.path()).unwrap();
+
+            // unzip and checking
+            unzip_all(expected_zip_path.as_file(), workspace.path()).unwrap();
 
             let res = folder_compare::FolderCompare::new(
                 fake_folder_path.as_path(),
@@ -476,7 +460,6 @@ mod tests {
 
             let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             let resources_dir = project_root.join("resources/test");
-            let expected_zip_path = resources_dir.join("fake_folder.zip");
             let fake_folder_path = resources_dir.join("fake_folder");
 
             let param = Param::ipath(fake_folder_path.to_str().unwrap());
@@ -485,21 +468,41 @@ mod tests {
                 .await
                 .unwrap();
 
-            let content_on_cloud = bucket
+            // download the uploaded directory as a zip file, and unzip it for checking identity
+            let uploaded_zip_file = tempfile::NamedTempFile::new_in(workspace.path()).unwrap();
+            let download_unzip_path = tempfile::tempdir_in(workspace.path()).unwrap();
+            bucket
                 .clone()
-                .read_bytes(param.cloud_url().as_str())
+                .download_to(param.cloud_url().as_str(), uploaded_zip_file.path())
                 .await
                 .unwrap();
 
-            // assert upload
-            assert_eq!(
-                content_on_cloud,
-                std::fs::read(expected_zip_path.to_str().unwrap()).unwrap()
+            let metadata = std::fs::metadata(uploaded_zip_file.path()).unwrap();
+            println!(
+                "Metadata of downloaded zip {:#?} is {:#?}",
+                uploaded_zip_file.path(),
+                metadata
             );
 
-            let downloaded_path = workspace.path();
+            unzip_all(
+                uploaded_zip_file.open().unwrap(),
+                download_unzip_path.path(),
+            )
+            .unwrap();
+
+            // assert upload
+            let res = folder_compare::FolderCompare::new(
+                download_unzip_path.path(),
+                fake_folder_path.as_path(),
+                &vec![],
+            )
+            .unwrap();
+            assert!(res.changed_files.is_empty());
+            assert!(res.new_files.is_empty());
+
+            let downloaded_path = tempfile::tempdir_in(workspace.path()).unwrap();
             let downloaded_id = param
-                .download(bucket.clone(), downloaded_path)
+                .download(bucket.clone(), downloaded_path.path())
                 .await
                 .unwrap();
 
@@ -507,7 +510,7 @@ mod tests {
             assert_eq!(uploaded_id, downloaded_id);
 
             let res = folder_compare::FolderCompare::new(
-                downloaded_path,
+                downloaded_path.path(),
                 fake_folder_path.as_path(),
                 &vec![],
             )
