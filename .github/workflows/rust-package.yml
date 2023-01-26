@@ -103,6 +103,7 @@ jobs:
       fail-fast: false
     env:
       CMDPROXY_VERSION: volatile
+      RUST_VERSION: 1.66
 
     steps:
       - uses: actions/checkout@v3
