@@ -1,6 +1,6 @@
 ARG RUST_VERSION
 
-FROM rust:${RUST_VERSION:-1.66}
+FROM rust:${RUST_VERSION:-1.65}
 
 WORKDIR /home/projects/cmdproxy
 RUN cargo init
