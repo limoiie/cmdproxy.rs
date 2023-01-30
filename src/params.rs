@@ -3,6 +3,7 @@ use std::path::Path;
 use std::{collections::HashMap, io::Write};
 
 use chrono::{Datelike, Timelike};
+use log::debug;
 use mongodb::bson::doc;
 use mongodb::bson::oid::ObjectId;
 use mongodb_gridfs::options::GridFSUploadOptions;
@@ -207,6 +208,7 @@ impl Param {
 
         if let Some(metadata) = bucket.metadata(oid).await? {
             if let Ok("application/directory+zip") = metadata.get_str("content_type") {
+                debug!("Unzip the downloaded zip file to {:#?}...", path);
                 unzip_all(tmp_file, path).unwrap();
                 return Ok(oid);
             }
@@ -280,13 +282,16 @@ where
         };
 
         if file.name().ends_with('/') {
+            debug!("  unzip - create dir {:#?}...", out_path);
             std::fs::create_dir_all(out_path).unwrap();
         } else {
             if let Some(outdir) = out_path.parent() {
                 if !outdir.exists() {
-                    std::fs::create_dir_all(outdir).unwrap()
+                    std::fs::create_dir_all(outdir).unwrap();
+                    debug!("  unzip - create parent dir {:#?}...", outdir);
                 }
             }
+            debug!("  unzip - extract file to {:#?}...", out_path);
             let mut outfile = std::fs::File::create(&out_path).unwrap();
             std::io::copy(&mut file, &mut outfile).unwrap();
         }
