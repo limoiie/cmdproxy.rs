@@ -419,6 +419,7 @@ mod tests {
         #[test]
         fn test_zip_unzip() {
             let workspace = tempfile::tempdir().unwrap();
+            let unzip_to = workspace.path();
 
             let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
             let resources_dir = project_root.join("resources/test");
@@ -429,11 +430,34 @@ mod tests {
             zip_dir(fake_folder_path.as_path(), expected_zip_path.path()).unwrap();
 
             // unzip and checking
-            unzip_all(expected_zip_path.as_file(), workspace.path()).unwrap();
+            unzip_all(expected_zip_path.as_file(), unzip_to).unwrap();
+
+            let res =
+                folder_compare::FolderCompare::new(fake_folder_path.as_path(), unzip_to, &vec![])
+                    .unwrap();
+            assert!(res.changed_files.is_empty());
+            assert!(res.new_files.is_empty());
+        }
+
+        #[test]
+        fn test_zip_unzip_to_non_existing_folder() {
+            let workspace = tempfile::tempdir().unwrap();
+            let unzip_to = workspace.path().join("unzipped");
+
+            let project_root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+            let resources_dir = project_root.join("resources/test");
+            let fake_folder_path = resources_dir.join("fake_folder");
+
+            // zip the folder
+            let expected_zip_path = tempfile::NamedTempFile::new_in(workspace.path()).unwrap();
+            zip_dir(fake_folder_path.as_path(), expected_zip_path.path()).unwrap();
+
+            // unzip and checking
+            unzip_all(expected_zip_path.as_file(), unzip_to.as_path()).unwrap();
 
             let res = folder_compare::FolderCompare::new(
                 fake_folder_path.as_path(),
-                workspace.path(),
+                unzip_to.as_path(),
                 &vec![],
             )
             .unwrap();
