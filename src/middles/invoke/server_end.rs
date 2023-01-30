@@ -5,6 +5,7 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use celery::export::async_trait;
+use chain_ext::path::file_ext::FileExt;
 use log::debug;
 use mongodb_gridfs::GridFSBucket;
 use strfmt::strfmt;
@@ -162,6 +163,7 @@ impl GuardStack<String> for ContextStack {
                 .tempfile_in(self.tempdir.path())
                 .unwrap()
                 .into_temp_path();
+            temppath.remove().unwrap();
             temppath
         };
 

@@ -198,14 +198,16 @@ impl Param {
         filepath: impl AsRef<Path> + Send + Sync,
     ) -> GridFSExtResult<ObjectId> {
         let path = filepath.as_ref();
+        // download to cache path
         let tmp_file = tempfile::Builder::new()
             .prefix(path.file_name().unwrap())
-            .suffix(".parts")
+            .suffix(".download.parts")
             .tempfile_in(path.parent().unwrap())?;
         let oid = bucket
             .download_to(self.cloud_url().as_str(), tmp_file.path())
             .await?;
 
+        // unzip if the cloud file is a compressed directory
         if let Some(metadata) = bucket.metadata(oid).await? {
             if let Ok("application/directory+zip") = metadata.get_str("content_type") {
                 debug!("Unzip the downloaded zip file to {:#?}...", path);
@@ -214,8 +216,9 @@ impl Param {
             }
         }
 
+        // otherwise, just move the downloaded file to the target path
         let (_, tmp_path) = tmp_file.keep().unwrap();
-        std::fs::rename(tmp_path, path)?;
+        tokio::fs::rename(tmp_path, path).await?;
         Ok(oid)
     }
 
@@ -322,6 +325,7 @@ fn zip_dir<P: AsRef<Path>>(src: P, dst: P) -> zip::result::ZipResult<()> {
         let options = FileOptions::default().last_modified_time(mtime);
         let name = path.strip_prefix(src.as_ref()).unwrap().to_str().unwrap();
         if path.is_file() {
+            debug!("  zip - add file {:#?}...", name);
             zip.start_file(name, options)?;
             let buffer = std::fs::read(path).unwrap();
             zip.write_all(buffer.as_slice())?;
@@ -329,6 +333,7 @@ fn zip_dir<P: AsRef<Path>>(src: P, dst: P) -> zip::result::ZipResult<()> {
             if path == src.as_ref() {
                 continue;
             }
+            debug!("  zip - add dir {:#?}...", name);
             zip.add_directory(name, options)?;
         }
     }
