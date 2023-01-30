@@ -44,7 +44,9 @@ impl Server {
                 .current_dir(run_spec.cwd.unwrap_or_else(|| ".".to_owned()))
                 .envs(run_spec.env.unwrap_or_default())
                 .status();
-            Ok(st?.code().unwrap_or(0))
+            let ret_code = st?.code().unwrap_or(0);
+            debug!("  returned with code {ret_code}");
+            Ok(ret_code)
         };
 
         let conf = invoke::server_end::Config {

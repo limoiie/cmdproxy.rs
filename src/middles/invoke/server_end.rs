@@ -114,9 +114,11 @@ impl ArgGuard<String> for OutCloudFileGuard {
     }
 
     async fn exit(&self) -> anyhow::Result<()> {
-        self.param
-            .upload(self.bucket.clone(), self.temppath.to_path_buf())
-            .await?;
+        if self.temppath.exists() {
+            self.param
+                .upload(self.bucket.clone(), self.temppath.to_path_buf())
+                .await?;
+        }
         debug!(
             "Upload local output {} to {}...",
             self.temppath.to_str().unwrap(),
