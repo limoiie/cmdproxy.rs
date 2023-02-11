@@ -1,5 +1,5 @@
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, LinkedList};
 use std::future::Future;
 use std::iter;
 use std::sync::Arc;
@@ -86,76 +86,45 @@ where
     F: FnMut(Param) -> Fut,
     Fut: Future<Output = anyhow::Result<P>>,
 {
-    let has_stdout = run_request.stdout.as_ref().map(|_| ());
-    let has_stderr = run_request.stderr.as_ref().map(|_| ());
-
     let env_keys = run_request
         .env
         .as_ref()
         .map(|m| m.keys().map(Clone::clone).collect::<Vec<_>>());
 
-    let n_to_downloads = run_request.to_downloads.as_ref().map(Vec::len);
-    let n_to_uploads = run_request.to_uploads.as_ref().map(Vec::len);
+    let has_stdout = run_request.stdout.as_ref().map(|_| ());
+    let has_stderr = run_request.stderr.as_ref().map(|_| ());
 
     let mut wrapped_args = futures::future::join_all(
-        run_request
-            .args
-            .into_iter()
+        iter::empty()
             .chain(iter::once(run_request.command))
+            .chain(run_request.env.into_iter().flat_map(|m| m.into_values()))
             .chain(run_request.stdout.into_iter())
             .chain(run_request.stderr.into_iter())
-            .chain(run_request.env.into_iter().flat_map(|m| m.into_values()))
-            .chain(
-                run_request
-                    .to_downloads
-                    .into_iter()
-                    .flat_map(|v| v.into_iter()),
-            )
-            .chain(
-                run_request
-                    .to_uploads
-                    .into_iter()
-                    .flat_map(|v| v.into_iter()),
-            )
+            .chain(run_request.args.into_iter())
             .map(fn_guard),
     )
     .await
     .into_iter()
-    .collect::<anyhow::Result<Vec<_>>>()?;
+    .collect::<anyhow::Result<LinkedList<_>>>()?;
 
     let cwd = run_request.cwd;
 
-    let to_uploads = n_to_uploads.map(|n_to_uploads| {
-        (0..n_to_uploads)
-            .rev()
-            .map(|_| wrapped_args.pop().unwrap())
-            .collect()
-    });
-    let to_downloads = n_to_downloads.map(|n_to_downloads| {
-        (0..n_to_downloads)
-            .rev()
-            .map(|_| wrapped_args.pop().unwrap())
-            .collect()
-    });
-
+    let command = wrapped_args.pop_front().unwrap();
     let env = env_keys.map(|keys| {
         keys.into_iter()
             .rev()
-            .map(|key| (key, wrapped_args.pop().unwrap()))
+            .map(|key| (key, wrapped_args.pop_front().unwrap()))
             .collect()
     });
-    let stderr = has_stderr.and_then(|_| wrapped_args.pop());
-    let stdout = has_stdout.and_then(|_| wrapped_args.pop());
-    let command = wrapped_args.pop().unwrap();
-    let args = wrapped_args;
+    let stdout = has_stdout.and_then(|_| wrapped_args.pop_front());
+    let stderr = has_stderr.and_then(|_| wrapped_args.pop_front());
+    let args = wrapped_args.into_iter().collect();
 
     Ok(RunSpecification::<P> {
         command,
         args,
         cwd,
         env,
-        to_downloads,
-        to_uploads,
         stdout,
         stderr,
     })

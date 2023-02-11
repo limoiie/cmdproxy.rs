@@ -252,6 +252,7 @@ impl Middle<RunRequest, RunResponse, RunRecipe, i32> for MiddleImpl {
         })
     }
 }
+
 #[cfg(test)]
 mod tests {
     use std::io::Write;

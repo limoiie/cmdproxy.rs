@@ -14,10 +14,6 @@ pub struct RunSpecification<P> {
     #[builder(default, setter(strip_option))]
     pub env: Option<HashMap<String, P>>,
     #[builder(default, setter(strip_option))]
-    pub to_downloads: Option<Vec<P>>,
-    #[builder(default, setter(strip_option))]
-    pub to_uploads: Option<Vec<P>>,
-    #[builder(default, setter(strip_option))]
     pub stdout: Option<P>,
     #[builder(default, setter(strip_option))]
     pub stderr: Option<P>,
