@@ -13,11 +13,23 @@ use tempfile::{TempDir, TempPath};
 use tokio::sync::Mutex;
 
 use crate::middles::invoke::{
-    guard_hashmap_args, guard_run_args, ArcMtxRefCell, ArgGuard, GuardStack,
+    guard_hashmap_args, guard_run_args, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData,
 };
 use crate::middles::Middle;
 use crate::params::Param;
 use crate::protocol::{RunRecipe, RunRequest, RunResponse};
+
+struct Data {
+    bucket: GridFSBucket,
+    conf: Config,
+    passed_env: HashMap<String, String>,
+}
+
+impl GuardStackData<String> for Data {
+    fn pass_env(&mut self, key: String, val: &String) {
+        self.passed_env.insert(key, val.clone());
+    }
+}
 
 struct StrGuard {
     value: String,
@@ -29,7 +41,6 @@ struct EnvGuard {
 
 struct CmdNameGuard {
     name: String,
-    conf: Arc<Mutex<Config>>,
 }
 
 struct CmdPathGuard {
@@ -38,13 +49,11 @@ struct CmdPathGuard {
 
 struct InCloudFileGuard {
     temppath: TempPath,
-    bucket: GridFSBucket,
     param: Param,
 }
 
 struct OutCloudFileGuard {
     temppath: TempPath,
-    bucket: GridFSBucket,
     param: Param,
 }
 
@@ -55,23 +64,32 @@ struct FormatGuard {
 }
 
 #[async_trait]
-impl ArgGuard<String> for StrGuard {
-    async fn enter(&self) -> anyhow::Result<String> {
+impl ArgGuard<String, Data> for StrGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
         Ok(self.value.clone())
     }
 }
 
 #[async_trait]
-impl ArgGuard<String> for EnvGuard {
-    async fn enter(&self) -> anyhow::Result<String> {
-        Ok(std::env::var(self.name.as_str())?)
+impl ArgGuard<String, Data> for EnvGuard {
+    async fn enter(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
+        let data = data.lock().await;
+        let data = data.borrow();
+        Ok(std::env::var(self.name.as_str()).unwrap_or_else(|_| {
+            data.passed_env
+                .get(self.name.as_str())
+                .map(Clone::clone)
+                .unwrap_or_else(String::new)
+        }))
     }
 }
 
 #[async_trait]
-impl ArgGuard<String> for CmdNameGuard {
-    async fn enter(&self) -> anyhow::Result<String> {
-        let command_palette = &self.conf.lock().await.command_palette;
+impl ArgGuard<String, Data> for CmdNameGuard {
+    async fn enter(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
+        let data = data.lock().await;
+        let data = data.borrow_mut();
+        let command_palette = &data.conf.command_palette;
         if let Some(command) = command_palette.get(self.name.as_str()) {
             Ok(command.clone())
         } else {
@@ -85,22 +103,28 @@ impl ArgGuard<String> for CmdNameGuard {
 }
 
 #[async_trait]
-impl ArgGuard<String> for CmdPathGuard {
-    async fn enter(&self) -> anyhow::Result<String> {
+impl ArgGuard<String, Data> for CmdPathGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
         Ok(self.path.clone())
     }
 }
 
 #[async_trait]
-impl ArgGuard<String> for InCloudFileGuard {
-    async fn enter(&self) -> anyhow::Result<String> {
+impl ArgGuard<String, Data> for InCloudFileGuard {
+    async fn enter(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
         debug!(
             "Download cloud input {} to {}...",
             self.param.cloud_url(),
             self.temppath.to_str().unwrap(),
         );
+
+        let bucket = {
+            let data = data.lock().await;
+            let data = data.borrow();
+            data.bucket.clone()
+        };
         self.param
-            .download(self.bucket.clone(), self.temppath.to_path_buf())
+            .download(bucket, self.temppath.to_path_buf())
             .await?;
 
         Ok(self.temppath.to_str().unwrap().to_string())
@@ -108,15 +132,21 @@ impl ArgGuard<String> for InCloudFileGuard {
 }
 
 #[async_trait]
-impl ArgGuard<String> for OutCloudFileGuard {
-    async fn enter(&self) -> anyhow::Result<String> {
+impl ArgGuard<String, Data> for OutCloudFileGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
         Ok(self.temppath.to_str().unwrap().to_string())
     }
 
-    async fn exit(&self) -> anyhow::Result<()> {
+    async fn exit(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<()> {
         if self.temppath.exists() {
+            let bucket = {
+                let data = data.lock().await;
+                let data = data.borrow();
+                data.bucket.clone()
+            };
+
             self.param
-                .upload(self.bucket.clone(), self.temppath.to_path_buf())
+                .upload(bucket, self.temppath.to_path_buf())
                 .await?;
         }
         debug!(
@@ -129,32 +159,30 @@ impl ArgGuard<String> for OutCloudFileGuard {
 }
 
 #[async_trait]
-impl ArgGuard<String> for FormatGuard {
-    async fn enter(&self) -> anyhow::Result<String> {
-        let args = guard_hashmap_args(&self.args, |param| self.ctx.push_guard(param)).await?;
+impl ArgGuard<String, Data> for FormatGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
+        let args = guard_hashmap_args(&self.args, |param| self.ctx.push_guard(param, None)).await?;
         Ok(strfmt(self.tmpl.as_str(), &args)?)
     }
 
-    async fn exit(&self) -> anyhow::Result<()> {
+    async fn exit(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<()> {
         self.ctx.pop_all().await.map(|_| ())
     }
 
-    async fn clean(&mut self) {
+    async fn clean(&mut self, _: &ArcMtxRefCell<Data>) {
         self.ctx.clean().await
     }
 }
 
 struct ContextStack {
     tempdir: TempDir,
-    bucket: GridFSBucket,
-    guards: ArcMtxRefCell<Vec<Box<dyn ArgGuard<String>>>>,
-    conf: Arc<Mutex<Config>>,
+    guards: ArcMtxRefCell<Vec<Box<dyn ArgGuard<String, Data>>>>,
+    data: ArcMtxRefCell<Data>,
 }
 
 #[async_trait]
-impl GuardStack<String> for ContextStack {
-    async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<String>> {
-        let bucket = self.bucket.clone();
+impl GuardStack<String, Data> for ContextStack {
+    async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<String, Data>> {
         let new_temppath = |filepath: String| async move {
             let filename = Path::new(filepath.as_str())
                 .file_name()
@@ -169,43 +197,52 @@ impl GuardStack<String> for ContextStack {
             temppath
         };
 
+        let (bucket, conf) = {
+            let data = self.data.lock().await;
+            let data = data.borrow_mut();
+            (data.bucket.clone(), data.conf.clone())
+        };
+
         match param {
             Param::StrParam { value } => Box::new(StrGuard { value }),
             Param::EnvParam { name } => Box::new(EnvGuard { name }),
-            Param::CmdNameParam { name } => Box::new(CmdNameGuard {
-                name,
-                conf: self.conf.clone(),
-            }),
+            Param::CmdNameParam { name } => Box::new(CmdNameGuard { name }),
             Param::CmdPathParam { path } => Box::new(CmdPathGuard { path }),
             Param::FormatParam { tmpl, args } => Box::new(FormatGuard {
                 tmpl,
                 args,
                 ctx: ContextStack {
-                    bucket,
                     tempdir: TempDir::new_in(self.tempdir.path()).unwrap(),
                     guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
-                    conf: self.conf.clone(),
+                    data: Arc::new(Mutex::new(RefCell::new(Data {
+                        bucket,
+                        conf,
+                        passed_env: HashMap::new(),
+                    }))),
                 },
             }),
             param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard {
                 temppath: new_temppath(param.filepath().to_string()).await,
-                bucket,
                 param,
             }),
             param @ Param::OutCloudFileParam { .. } => Box::new(OutCloudFileGuard {
                 temppath: new_temppath(param.filepath().to_string()).await,
-                bucket,
                 param,
             }),
             param => unreachable!("Unaccepted Param {:#?} for server", param),
         }
     }
 
-    fn guards(&self) -> &ArcMtxRefCell<Vec<Box<dyn ArgGuard<String>>>> {
+    fn guards(&self) -> &ArcMtxRefCell<Vec<Box<dyn ArgGuard<String, Data>>>> {
         &self.guards
+    }
+
+    fn data(&self) -> &ArcMtxRefCell<Data> {
+        &self.data
     }
 }
 
+#[derive(Clone)]
 pub(crate) struct Config {
     pub(crate) command_palette: HashMap<String, String>,
 }
@@ -219,9 +256,12 @@ impl MiddleImpl {
         MiddleImpl {
             ctx: ContextStack {
                 tempdir,
-                bucket,
                 guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
-                conf: Arc::new(Mutex::new(conf)),
+                data: Arc::new(Mutex::new(RefCell::new(Data {
+                    bucket,
+                    conf,
+                    passed_env: HashMap::new(),
+                }))),
             },
         }
     }
@@ -238,7 +278,7 @@ impl Drop for MiddleImpl {
 #[async_trait]
 impl Middle<RunRequest, RunResponse, RunRecipe, i32> for MiddleImpl {
     async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunRecipe> {
-        guard_run_args(run_request, |param| self.ctx.push_guard(param)).await
+        guard_run_args(run_request, |param, key| self.ctx.push_guard(param, key)).await
     }
 
     async fn transform_response(

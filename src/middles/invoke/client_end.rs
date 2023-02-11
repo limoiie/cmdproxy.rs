@@ -8,11 +8,19 @@ use mongodb_gridfs::GridFSBucket;
 use tokio::sync::Mutex;
 
 use crate::middles::invoke::{
-    guard_hashmap_args, guard_run_args, ArcMtxRefCell, ArgGuard, GuardStack,
+    guard_hashmap_args, guard_run_args, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData,
 };
 use crate::middles::Middle;
 use crate::params::Param;
 use crate::protocol::{RunRequest, RunResponse};
+
+struct Data {
+    bucket: GridFSBucket,
+}
+
+impl GuardStackData<Param> for Data {
+    fn pass_env(&mut self, _: String, _: &Param) {}
+}
 
 struct StrGuard {
     value: String,
@@ -43,12 +51,10 @@ struct OutCloudFileGuard {
 }
 
 struct InLocalFileGuard {
-    bucket: GridFSBucket,
     param: Param,
 }
 
 struct OutLocalFileGuard {
-    bucket: GridFSBucket,
     param: Param,
 }
 
@@ -59,8 +65,8 @@ struct FormatGuard {
 }
 
 #[async_trait]
-impl ArgGuard<Param> for StrGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
+impl ArgGuard<Param, Data> for StrGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
         Ok(Param::StrParam {
             value: self.value.clone(),
         })
@@ -68,8 +74,8 @@ impl ArgGuard<Param> for StrGuard {
 }
 
 #[async_trait]
-impl ArgGuard<Param> for EnvGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
+impl ArgGuard<Param, Data> for EnvGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
         Ok(Param::StrParam {
             value: std::env::var(self.name.as_str())?,
         })
@@ -77,8 +83,8 @@ impl ArgGuard<Param> for EnvGuard {
 }
 
 #[async_trait]
-impl ArgGuard<Param> for RemoteEnvGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
+impl ArgGuard<Param, Data> for RemoteEnvGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
         Ok(Param::EnvParam {
             name: self.name.clone(),
         })
@@ -86,8 +92,8 @@ impl ArgGuard<Param> for RemoteEnvGuard {
 }
 
 #[async_trait]
-impl ArgGuard<Param> for CmdNameGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
+impl ArgGuard<Param, Data> for CmdNameGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
         Ok(Param::CmdNameParam {
             name: self.name.clone(),
         })
@@ -95,8 +101,8 @@ impl ArgGuard<Param> for CmdNameGuard {
 }
 
 #[async_trait]
-impl ArgGuard<Param> for CmdPathGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
+impl ArgGuard<Param, Data> for CmdPathGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
         Ok(Param::CmdPathParam {
             path: self.path.clone(),
         })
@@ -104,116 +110,150 @@ impl ArgGuard<Param> for CmdPathGuard {
 }
 
 #[async_trait]
-impl ArgGuard<Param> for InCloudFileGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
+impl ArgGuard<Param, Data> for InCloudFileGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
         Ok(self.param.clone())
     }
 }
 
 #[async_trait]
-impl ArgGuard<Param> for InLocalFileGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
+impl ArgGuard<Param, Data> for InLocalFileGuard {
+    async fn enter(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
         debug!(
             "Upload local input {} to {}...",
             self.param.filepath(),
             self.param.cloud_url(),
         );
-        self.param.upload_inplace(self.bucket.clone()).await?;
+
+        let bucket = {
+            let data = data.lock().await;
+            let data = data.borrow();
+            data.bucket.clone()
+        };
+        self.param.upload_inplace(bucket).await?;
         Ok(self.param.as_cloud())
     }
 
-    async fn clean(&mut self) {
+    //noinspection DuplicatedCode
+    async fn clean(&mut self, data: &ArcMtxRefCell<Data>) {
+        let bucket = {
+            let data = data.lock().await;
+            let data = data.borrow();
+            data.bucket.clone()
+        };
         self.param
-            .remove_from_cloud(self.bucket.clone())
+            .remove_from_cloud(bucket)
             .await
             .unwrap_or_default();
     }
 }
 
 #[async_trait]
-impl ArgGuard<Param> for OutCloudFileGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
+impl ArgGuard<Param, Data> for OutCloudFileGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
         Ok(self.param.as_cloud())
     }
 }
 
 #[async_trait]
-impl ArgGuard<Param> for OutLocalFileGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
+impl ArgGuard<Param, Data> for OutLocalFileGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
         Ok(self.param.as_cloud())
     }
 
-    async fn exit(&self) -> anyhow::Result<()> {
+    async fn exit(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<()> {
         debug!(
             "Download cloud output {} to {}...",
             self.param.cloud_url(),
             self.param.filepath()
         );
-        self.param.download_inplace(self.bucket.clone()).await?;
+
+        let bucket = {
+            let data = data.lock().await;
+            let data = data.borrow();
+            data.bucket.clone()
+        };
+        self.param.download_inplace(bucket).await?;
         Ok(())
     }
 
-    async fn clean(&mut self) {
+    //noinspection DuplicatedCode
+    async fn clean(&mut self, data: &ArcMtxRefCell<Data>) {
+        let bucket = {
+            let data = data.lock().await;
+            let data = data.borrow();
+            data.bucket.clone()
+        };
         self.param
-            .remove_from_cloud(self.bucket.clone())
+            .remove_from_cloud(bucket)
             .await
             .unwrap_or_default();
     }
 }
 
 #[async_trait]
-impl ArgGuard<Param> for FormatGuard {
-    async fn enter(&self) -> anyhow::Result<Param> {
-        let args = guard_hashmap_args(&self.args, |param| self.ctx.push_guard(param)).await?;
+impl ArgGuard<Param, Data> for FormatGuard {
+    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
+        let args = guard_hashmap_args(&self.args, |param| self.ctx.push_guard(param, None)).await?;
         Ok(Param::FormatParam {
             tmpl: self.tmpl.clone(),
             args,
         })
     }
 
-    async fn exit(&self) -> anyhow::Result<()> {
+    async fn exit(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<()> {
         self.ctx.pop_all().await.map(|_| ())
     }
 
-    async fn clean(&mut self) {
+    async fn clean(&mut self, _: &ArcMtxRefCell<Data>) {
         self.ctx.clean().await
     }
 }
 
 struct ContextStack {
-    bucket: GridFSBucket,
-    guards: ArcMtxRefCell<Vec<Box<dyn ArgGuard<Param>>>>,
+    guards: ArcMtxRefCell<Vec<Box<dyn ArgGuard<Param, Data>>>>,
+    data: ArcMtxRefCell<Data>,
 }
 
 #[async_trait]
-impl GuardStack<Param> for ContextStack {
-    async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<Param>> {
-        let bucket = self.bucket.clone();
+impl GuardStack<Param, Data> for ContextStack {
+    //noinspection DuplicatedCode
+    async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<Param, Data>> {
         match param {
             Param::StrParam { value } => Box::new(StrGuard { value }),
             Param::EnvParam { name } => Box::new(EnvGuard { name }),
             Param::RemoteEnvParam { name } => Box::new(RemoteEnvGuard { name }),
             Param::CmdNameParam { name } => Box::new(CmdNameGuard { name }),
             Param::CmdPathParam { path } => Box::new(CmdPathGuard { path }),
-            Param::FormatParam { tmpl, args } => Box::new(FormatGuard {
-                tmpl,
-                args,
-                ctx: ContextStack {
-                    bucket: self.bucket.clone(),
-                    guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
-                },
-            }),
-            param @ Param::InLocalFileParam { .. } => Box::new(InLocalFileGuard { bucket, param }),
-            param @ Param::OutLocalFileParam { .. } => {
-                Box::new(OutLocalFileGuard { bucket, param })
+            Param::FormatParam { tmpl, args } => {
+                let bucket = {
+                    let data = self.data.lock().await;
+                    let data = data.borrow_mut();
+                    data.bucket.clone()
+                };
+
+                Box::new(FormatGuard {
+                    tmpl,
+                    args,
+                    ctx: ContextStack {
+                        guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
+                        data: Arc::new(Mutex::new(RefCell::new(Data { bucket }))),
+                    },
+                })
             }
+            param @ Param::InLocalFileParam { .. } => Box::new(InLocalFileGuard { param }),
+            param @ Param::OutLocalFileParam { .. } => Box::new(OutLocalFileGuard { param }),
             param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard { param }),
             param @ Param::OutCloudFileParam { .. } => Box::new(OutCloudFileGuard { param }),
         }
     }
 
-    fn guards(&self) -> &Arc<Mutex<RefCell<Vec<Box<dyn ArgGuard<Param>>>>>> {
+    fn guards(&self) -> &Arc<Mutex<RefCell<Vec<Box<dyn ArgGuard<Param, Data>>>>>> {
         &self.guards
+    }
+
+    fn data(&self) -> &ArcMtxRefCell<Data> {
+        &self.data
     }
 }
 
@@ -222,11 +262,12 @@ pub(crate) struct MiddleImpl {
 }
 
 impl MiddleImpl {
+    //noinspection DuplicatedCode
     pub fn new(bucket: GridFSBucket) -> MiddleImpl {
         MiddleImpl {
             ctx: ContextStack {
-                bucket,
                 guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
+                data: Arc::new(Mutex::new(RefCell::new(Data { bucket }))),
             },
         }
     }
@@ -243,7 +284,7 @@ impl Drop for MiddleImpl {
 #[async_trait]
 impl Middle<RunRequest, RunResponse, RunRequest, RunResponse> for MiddleImpl {
     async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunRequest> {
-        guard_run_args(run_request, |param| self.ctx.push_guard(param)).await
+        guard_run_args(run_request, |param, key| self.ctx.push_guard(param, key)).await
     }
 
     async fn transform_response(
