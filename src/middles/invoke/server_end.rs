@@ -22,12 +22,55 @@ use crate::protocol::{RunRecipe, RunRequest, RunResponse};
 struct Data {
     bucket: GridFSBucket,
     conf: Config,
+    tempdir: TempDir,
+    guards: Vec<Box<dyn ArgGuard<String, Data>>>,
     passed_env: HashMap<String, String>,
 }
 
 impl GuardStackData<String> for Data {
     fn pass_env(&mut self, key: String, val: &String) {
         self.passed_env.insert(key, val.clone());
+    }
+
+    fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<String, Self>> {
+        let new_temppath = |filepath: String| {
+            let filename = Path::new(filepath.as_str())
+                .file_name()
+                .and_then(std::ffi::OsStr::to_str)
+                .unwrap_or("");
+            let temppath = tempfile::Builder::new()
+                .suffix(filename)
+                .tempfile_in(self.tempdir.path())
+                .unwrap()
+                .into_temp_path();
+            temppath.remove().unwrap();
+            temppath
+        };
+
+        match param {
+            Param::StrParam { value } => Box::new(StrGuard { value }),
+            Param::EnvParam { name } => Box::new(EnvGuard { name }),
+            Param::CmdNameParam { name } => Box::new(CmdNameGuard { name }),
+            Param::CmdPathParam { path } => Box::new(CmdPathGuard { path }),
+            Param::FormatParam { tmpl, args } => Box::new(FormatGuard { tmpl, args }),
+            param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard {
+                temppath: new_temppath(param.filepath().to_string()),
+                param,
+            }),
+            param @ Param::OutCloudFileParam { .. } => Box::new(OutCloudFileGuard {
+                temppath: new_temppath(param.filepath().to_string()),
+                param,
+            }),
+            param => unreachable!("Unaccepted Param {:#?} for server", param),
+        }
+    }
+
+    fn guards(&self) -> &Vec<Box<dyn ArgGuard<String, Self>>> {
+        &self.guards
+    }
+
+    fn guards_mut(&mut self) -> &mut Vec<Box<dyn ArgGuard<String, Self>>> {
+        &mut self.guards
     }
 }
 
@@ -60,7 +103,6 @@ struct OutCloudFileGuard {
 struct FormatGuard {
     tmpl: String,
     args: HashMap<String, Param>,
-    ctx: ContextStack,
 }
 
 #[async_trait]
@@ -160,83 +202,21 @@ impl ArgGuard<String, Data> for OutCloudFileGuard {
 
 #[async_trait]
 impl ArgGuard<String, Data> for FormatGuard {
-    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
-        let args = guard_hashmap_args(&self.args, |param| self.ctx.push_guard(param, None)).await?;
+    async fn enter(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
+        let args = guard_hashmap_args(&self.args, |param| {
+            GuardStackData::push_guard(data, param, None)
+        })
+        .await?;
         Ok(strfmt(self.tmpl.as_str(), &args)?)
-    }
-
-    async fn exit(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<()> {
-        self.ctx.pop_all().await.map(|_| ())
-    }
-
-    async fn clean(&mut self, _: &ArcMtxRefCell<Data>) {
-        self.ctx.clean().await
     }
 }
 
 struct ContextStack {
-    tempdir: TempDir,
-    guards: ArcMtxRefCell<Vec<Box<dyn ArgGuard<String, Data>>>>,
     data: ArcMtxRefCell<Data>,
 }
 
 #[async_trait]
 impl GuardStack<String, Data> for ContextStack {
-    async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<String, Data>> {
-        let new_temppath = |filepath: String| async move {
-            let filename = Path::new(filepath.as_str())
-                .file_name()
-                .and_then(std::ffi::OsStr::to_str)
-                .unwrap_or("");
-            let temppath = tempfile::Builder::new()
-                .suffix(filename)
-                .tempfile_in(self.tempdir.path())
-                .unwrap()
-                .into_temp_path();
-            temppath.remove().unwrap();
-            temppath
-        };
-
-        let (bucket, conf) = {
-            let data = self.data.lock().await;
-            let data = data.borrow_mut();
-            (data.bucket.clone(), data.conf.clone())
-        };
-
-        match param {
-            Param::StrParam { value } => Box::new(StrGuard { value }),
-            Param::EnvParam { name } => Box::new(EnvGuard { name }),
-            Param::CmdNameParam { name } => Box::new(CmdNameGuard { name }),
-            Param::CmdPathParam { path } => Box::new(CmdPathGuard { path }),
-            Param::FormatParam { tmpl, args } => Box::new(FormatGuard {
-                tmpl,
-                args,
-                ctx: ContextStack {
-                    tempdir: TempDir::new_in(self.tempdir.path()).unwrap(),
-                    guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
-                    data: Arc::new(Mutex::new(RefCell::new(Data {
-                        bucket,
-                        conf,
-                        passed_env: HashMap::new(),
-                    }))),
-                },
-            }),
-            param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard {
-                temppath: new_temppath(param.filepath().to_string()).await,
-                param,
-            }),
-            param @ Param::OutCloudFileParam { .. } => Box::new(OutCloudFileGuard {
-                temppath: new_temppath(param.filepath().to_string()).await,
-                param,
-            }),
-            param => unreachable!("Unaccepted Param {:#?} for server", param),
-        }
-    }
-
-    fn guards(&self) -> &ArcMtxRefCell<Vec<Box<dyn ArgGuard<String, Data>>>> {
-        &self.guards
-    }
-
     fn data(&self) -> &ArcMtxRefCell<Data> {
         &self.data
     }
@@ -255,23 +235,15 @@ impl MiddleImpl {
     pub(crate) fn new(bucket: GridFSBucket, tempdir: TempDir, conf: Config) -> MiddleImpl {
         MiddleImpl {
             ctx: ContextStack {
-                tempdir,
-                guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
                 data: Arc::new(Mutex::new(RefCell::new(Data {
                     bucket,
                     conf,
+                    tempdir,
+                    guards: Vec::new(),
                     passed_env: HashMap::new(),
                 }))),
             },
         }
-    }
-}
-
-impl Drop for MiddleImpl {
-    fn drop(&mut self) {
-        futures::executor::block_on(async {
-            self.ctx.clean().await;
-        })
     }
 }
 
@@ -285,7 +257,7 @@ impl Middle<RunRequest, RunResponse, RunRecipe, i32> for MiddleImpl {
         &self,
         response: anyhow::Result<i32>,
     ) -> anyhow::Result<RunResponse> {
-        self.ctx.pop_all().await?;
+        self.ctx.pop_all_guards().await?;
         Ok(RunResponse {
             return_code: response?,
             exc: None,

@@ -22,52 +22,77 @@ where
     async fn exit(&self, _: &ArcMtxRefCell<D>) -> anyhow::Result<()> {
         Ok(())
     }
-    async fn clean(&mut self, _: &ArcMtxRefCell<D>) {}
 }
 
-pub trait GuardStackData<P> {
+#[async_trait]
+pub trait GuardStackData<P>: Sized + Send + Sync
+where
+    P: Send + Sync,
+{
     fn pass_env(&mut self, key: String, val: &P);
+
+    async fn push_guard(
+        data: &ArcMtxRefCell<Self>,
+        arg: Param,
+        key: Option<String>,
+    ) -> anyhow::Result<P> {
+        let param = {
+            let guard = {
+                let data = data.lock().await;
+                let data = data.borrow();
+                data.guard_param(arg)
+            };
+            let param = guard.enter(data).await?;
+            let data = data.lock().await;
+            let mut data = data.borrow_mut();
+            data.guards_mut().push(guard);
+            param
+        };
+        if let Some(key) = key {
+            let data = data.lock().await;
+            let mut data = data.borrow_mut();
+            data.pass_env(key, &param);
+        };
+        Ok(param)
+    }
+
+    fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<P, Self>>;
+
+    fn guards(&self) -> &Vec<Box<dyn ArgGuard<P, Self>>>;
+
+    fn guards_mut(&mut self) -> &mut Vec<Box<dyn ArgGuard<P, Self>>>;
 }
 
 #[async_trait]
 pub trait GuardStack<P, D>: Send + Sync
 where
     P: Send + Sync,
-    D: GuardStackData<P> + Send + Sync,
+    D: GuardStackData<P>,
 {
     async fn push_guard(&self, arg: Param, key: Option<String>) -> anyhow::Result<P> {
-        let guard = self.guard_param(arg).await;
-        let param = guard.enter(self.data()).await;
-        if let (Some(key), Ok(param)) = (key, param.as_ref()) {
-            let data = self.data().lock().await;
-            let mut data = data.borrow_mut();
-            data.pass_env(key, param);
-        };
-        let guards = self.guards().lock().await;
-        guards.borrow_mut().push(guard);
-        param
+        GuardStackData::push_guard(self.data(), arg, key).await
     }
 
-    async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<P, D>>;
-
-    fn guards(&self) -> &ArcMtxRefCell<Vec<Box<dyn ArgGuard<P, D>>>>;
-
-    fn data(&self) -> &ArcMtxRefCell<D>;
-
-    async fn pop_all(&self) -> anyhow::Result<Vec<()>> {
-        let mut guards = self.guards().lock().await;
-        let guards = guards.get_mut();
+    async fn pop_all_guards(&self) -> anyhow::Result<Vec<()>> {
+        let guards = self.guards().await;
         futures::future::join_all(guards.iter().map(|guard| guard.exit(self.data())))
             .await
             .into_iter()
             .collect()
     }
 
-    async fn clean(&mut self) {
-        let guards = self.guards().lock().await;
-        let mut guards = guards.take();
-        futures::future::join_all(guards.iter_mut().map(|guard| guard.clean(self.data()))).await;
+    async fn guards(&self) -> Vec<Box<dyn ArgGuard<P, D>>> {
+        let data = self.data().lock().await;
+        let mut data = data.borrow_mut();
+        let guards = data.guards_mut();
+        let mut out = vec![];
+        while let Some(guard) = guards.pop() {
+            out.push(guard)
+        }
+        out
     }
+
+    fn data(&self) -> &ArcMtxRefCell<D>;
 }
 
 pub async fn guard_hashmap_args<P, F, Fut>(

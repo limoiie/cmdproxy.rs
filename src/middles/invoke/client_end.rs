@@ -16,10 +16,34 @@ use crate::protocol::{RunRequest, RunResponse};
 
 struct Data {
     bucket: GridFSBucket,
+    guards: Vec<Box<dyn ArgGuard<Param, Data>>>,
 }
 
 impl GuardStackData<Param> for Data {
     fn pass_env(&mut self, _: String, _: &Param) {}
+
+    fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<Param, Self>> {
+        match param {
+            Param::StrParam { value } => Box::new(StrGuard { value }),
+            Param::EnvParam { name } => Box::new(EnvGuard { name }),
+            Param::RemoteEnvParam { name } => Box::new(RemoteEnvGuard { name }),
+            Param::CmdNameParam { name } => Box::new(CmdNameGuard { name }),
+            Param::CmdPathParam { path } => Box::new(CmdPathGuard { path }),
+            Param::FormatParam { tmpl, args } => Box::new(FormatGuard { tmpl, args }),
+            param @ Param::InLocalFileParam { .. } => Box::new(InLocalFileGuard { param }),
+            param @ Param::OutLocalFileParam { .. } => Box::new(OutLocalFileGuard { param }),
+            param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard { param }),
+            param @ Param::OutCloudFileParam { .. } => Box::new(OutCloudFileGuard { param }),
+        }
+    }
+
+    fn guards(&self) -> &Vec<Box<dyn ArgGuard<Param, Self>>> {
+        &self.guards
+    }
+
+    fn guards_mut(&mut self) -> &mut Vec<Box<dyn ArgGuard<Param, Self>>> {
+        &mut self.guards
+    }
 }
 
 struct StrGuard {
@@ -61,7 +85,6 @@ struct OutLocalFileGuard {
 struct FormatGuard {
     tmpl: String,
     args: HashMap<String, Param>,
-    ctx: ContextStack,
 }
 
 #[async_trait]
@@ -135,7 +158,7 @@ impl ArgGuard<Param, Data> for InLocalFileGuard {
     }
 
     //noinspection DuplicatedCode
-    async fn clean(&mut self, data: &ArcMtxRefCell<Data>) {
+    async fn exit(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<()> {
         let bucket = {
             let data = data.lock().await;
             let data = data.borrow();
@@ -144,7 +167,7 @@ impl ArgGuard<Param, Data> for InLocalFileGuard {
         self.param
             .remove_from_cloud(bucket)
             .await
-            .unwrap_or_default();
+            .map_err(Into::into)
     }
 }
 
@@ -173,85 +196,35 @@ impl ArgGuard<Param, Data> for OutLocalFileGuard {
             let data = data.borrow();
             data.bucket.clone()
         };
-        self.param.download_inplace(bucket).await?;
-        Ok(())
-    }
-
-    //noinspection DuplicatedCode
-    async fn clean(&mut self, data: &ArcMtxRefCell<Data>) {
-        let bucket = {
-            let data = data.lock().await;
-            let data = data.borrow();
-            data.bucket.clone()
-        };
+        self.param.download_inplace(bucket.clone()).await?;
         self.param
             .remove_from_cloud(bucket)
             .await
             .unwrap_or_default();
+        Ok(())
     }
 }
 
 #[async_trait]
 impl ArgGuard<Param, Data> for FormatGuard {
-    async fn enter(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
-        let args = guard_hashmap_args(&self.args, |param| self.ctx.push_guard(param, None)).await?;
+    async fn enter(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
+        let args = guard_hashmap_args(&self.args, |param| {
+            GuardStackData::push_guard(data, param, None)
+        })
+        .await?;
         Ok(Param::FormatParam {
             tmpl: self.tmpl.clone(),
             args,
         })
     }
-
-    async fn exit(&self, _: &ArcMtxRefCell<Data>) -> anyhow::Result<()> {
-        self.ctx.pop_all().await.map(|_| ())
-    }
-
-    async fn clean(&mut self, _: &ArcMtxRefCell<Data>) {
-        self.ctx.clean().await
-    }
 }
 
 struct ContextStack {
-    guards: ArcMtxRefCell<Vec<Box<dyn ArgGuard<Param, Data>>>>,
     data: ArcMtxRefCell<Data>,
 }
 
 #[async_trait]
 impl GuardStack<Param, Data> for ContextStack {
-    //noinspection DuplicatedCode
-    async fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<Param, Data>> {
-        match param {
-            Param::StrParam { value } => Box::new(StrGuard { value }),
-            Param::EnvParam { name } => Box::new(EnvGuard { name }),
-            Param::RemoteEnvParam { name } => Box::new(RemoteEnvGuard { name }),
-            Param::CmdNameParam { name } => Box::new(CmdNameGuard { name }),
-            Param::CmdPathParam { path } => Box::new(CmdPathGuard { path }),
-            Param::FormatParam { tmpl, args } => {
-                let bucket = {
-                    let data = self.data.lock().await;
-                    let data = data.borrow_mut();
-                    data.bucket.clone()
-                };
-
-                Box::new(FormatGuard {
-                    tmpl,
-                    args,
-                    ctx: ContextStack {
-                        guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
-                        data: Arc::new(Mutex::new(RefCell::new(Data { bucket }))),
-                    },
-                })
-            }
-            param @ Param::InLocalFileParam { .. } => Box::new(InLocalFileGuard { param }),
-            param @ Param::OutLocalFileParam { .. } => Box::new(OutLocalFileGuard { param }),
-            param @ Param::InCloudFileParam { .. } => Box::new(InCloudFileGuard { param }),
-            param @ Param::OutCloudFileParam { .. } => Box::new(OutCloudFileGuard { param }),
-        }
-    }
-
-    fn guards(&self) -> &Arc<Mutex<RefCell<Vec<Box<dyn ArgGuard<Param, Data>>>>>> {
-        &self.guards
-    }
-
     fn data(&self) -> &ArcMtxRefCell<Data> {
         &self.data
     }
@@ -266,18 +239,12 @@ impl MiddleImpl {
     pub fn new(bucket: GridFSBucket) -> MiddleImpl {
         MiddleImpl {
             ctx: ContextStack {
-                guards: Arc::new(Mutex::new(RefCell::new(vec![]))),
-                data: Arc::new(Mutex::new(RefCell::new(Data { bucket }))),
+                data: Arc::new(Mutex::new(RefCell::new(Data {
+                    bucket,
+                    guards: Vec::new(),
+                }))),
             },
         }
-    }
-}
-
-impl Drop for MiddleImpl {
-    fn drop(&mut self) {
-        futures::executor::block_on(async {
-            self.ctx.clean().await;
-        })
     }
 }
 
@@ -291,7 +258,7 @@ impl Middle<RunRequest, RunResponse, RunRequest, RunResponse> for MiddleImpl {
         &self,
         response: anyhow::Result<RunResponse>,
     ) -> anyhow::Result<RunResponse> {
-        self.ctx.pop_all().await?;
+        self.ctx.pop_all_guards().await?;
         response
     }
 }
