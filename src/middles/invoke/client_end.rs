@@ -8,7 +8,8 @@ use mongodb_gridfs::GridFSBucket;
 use tokio::sync::Mutex;
 
 use crate::middles::invoke::{
-    guard_hashmap_args, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData, InvokeMiddle,
+    guard_hashmap_args, push_guard, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData,
+    InvokeMiddle,
 };
 use crate::params::Param;
 
@@ -206,10 +207,7 @@ impl ArgGuard<Param, Data> for OutLocalFileGuard {
 #[async_trait]
 impl ArgGuard<Param, Data> for FormatGuard {
     async fn enter(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<Param> {
-        let args = guard_hashmap_args(&self.args, |param| {
-            GuardStackData::push_guard(data, param, None)
-        })
-        .await?;
+        let args = guard_hashmap_args(&self.args, |param| push_guard(data, param, None)).await?;
         Ok(Param::FormatParam {
             tmpl: self.tmpl.clone(),
             args,

@@ -58,43 +58,47 @@ where
 }
 
 #[async_trait]
-pub trait GuardStackData<PA, PB>: Sized + Send + Sync
+pub trait GuardStackData<PA, PB>: Send + Sync
 where
     PA: Send + Sync + 'static,
     PB: Send + Sync,
 {
     fn pass_env(&mut self, key: String, val: &PB);
 
-    async fn push_guard(
-        data: &ArcMtxRefCell<Self>,
-        arg: PA,
-        key: Option<String>,
-    ) -> anyhow::Result<PB> {
-        let param = {
-            let guard = {
-                let data = data.lock().await;
-                let data = data.borrow();
-                data.guard_param(arg)
-            };
-            let param = guard.enter(data).await?;
-            let data = data.lock().await;
-            let mut data = data.borrow_mut();
-            data.guards_mut().push(guard);
-            param
-        };
-        if let Some(key) = key {
-            let data = data.lock().await;
-            let mut data = data.borrow_mut();
-            data.pass_env(key, &param);
-        };
-        Ok(param)
-    }
-
     fn guard_param(&self, param: PA) -> Box<dyn ArgGuard<PB, Self>>;
 
     fn guards(&self) -> &Vec<Box<dyn ArgGuard<PB, Self>>>;
 
     fn guards_mut(&mut self) -> &mut Vec<Box<dyn ArgGuard<PB, Self>>>;
+}
+
+pub async fn push_guard<PA, PB>(
+    data: &ArcMtxRefCell<impl GuardStackData<PA, PB>>,
+    arg: PA,
+    key: Option<String>,
+) -> anyhow::Result<PB>
+where
+    PA: Send + Sync + 'static,
+    PB: Send + Sync,
+{
+    let param = {
+        let guard = {
+            let data = data.lock().await;
+            let data = data.borrow();
+            data.guard_param(arg)
+        };
+        let param = guard.enter(data).await?;
+        let data = data.lock().await;
+        let mut data = data.borrow_mut();
+        data.guards_mut().push(guard);
+        param
+    };
+    if let Some(key) = key {
+        let data = data.lock().await;
+        let mut data = data.borrow_mut();
+        data.pass_env(key, &param);
+    };
+    Ok(param)
 }
 
 #[async_trait]
@@ -105,7 +109,7 @@ where
     D: GuardStackData<PA, PB>,
 {
     async fn push_guard(&self, arg: PA, key: Option<String>) -> anyhow::Result<PB> {
-        GuardStackData::push_guard(self.data(), arg, key).await
+        push_guard(self.data(), arg, key).await
     }
 
     async fn pop_all_guards(&self) -> anyhow::Result<Vec<()>> {

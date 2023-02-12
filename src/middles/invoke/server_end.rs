@@ -13,7 +13,8 @@ use tempfile::{TempDir, TempPath};
 use tokio::sync::Mutex;
 
 use crate::middles::invoke::{
-    guard_hashmap_args, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData, InvokeMiddle,
+    guard_hashmap_args, push_guard, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData,
+    InvokeMiddle,
 };
 use crate::params::Param;
 
@@ -201,10 +202,7 @@ impl ArgGuard<String, Data> for OutCloudFileGuard {
 #[async_trait]
 impl ArgGuard<String, Data> for FormatGuard {
     async fn enter(&self, data: &ArcMtxRefCell<Data>) -> anyhow::Result<String> {
-        let args = guard_hashmap_args(&self.args, |param| {
-            GuardStackData::push_guard(data, param, None)
-        })
-        .await?;
+        let args = guard_hashmap_args(&self.args, |param| push_guard(data, param, None)).await?;
         Ok(strfmt(self.tmpl.as_str(), &args)?)
     }
 }
