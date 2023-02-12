@@ -8,18 +8,16 @@ use mongodb_gridfs::GridFSBucket;
 use tokio::sync::Mutex;
 
 use crate::middles::invoke::{
-    guard_hashmap_args, guard_run_args, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData,
+    guard_hashmap_args, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData, InvokeMiddle,
 };
-use crate::middles::Middle;
 use crate::params::Param;
-use crate::protocol::{RunRequest, RunResponse};
 
 struct Data {
     bucket: GridFSBucket,
     guards: Vec<Box<dyn ArgGuard<Param, Data>>>,
 }
 
-impl GuardStackData<Param> for Data {
+impl GuardStackData<Param, Param> for Data {
     fn pass_env(&mut self, _: String, _: &Param) {}
 
     fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<Param, Self>> {
@@ -224,7 +222,7 @@ struct ContextStack {
 }
 
 #[async_trait]
-impl GuardStack<Param, Data> for ContextStack {
+impl GuardStack<Param, Param, Data> for ContextStack {
     fn data(&self) -> &ArcMtxRefCell<Data> {
         &self.data
     }
@@ -249,17 +247,13 @@ impl MiddleImpl {
 }
 
 #[async_trait]
-impl Middle<RunRequest, RunResponse, RunRequest, RunResponse> for MiddleImpl {
-    async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunRequest> {
-        guard_run_args(run_request, |param, key| self.ctx.push_guard(param, key)).await
+impl InvokeMiddle<Param, Param> for MiddleImpl {
+    async fn push_guard(&self, param: Param, key: Option<String>) -> anyhow::Result<Param> {
+        self.ctx.push_guard(param, key).await
     }
 
-    async fn transform_response(
-        &self,
-        response: anyhow::Result<RunResponse>,
-    ) -> anyhow::Result<RunResponse> {
-        self.ctx.pop_all_guards().await?;
-        response
+    async fn pop_all_guards(&self) -> anyhow::Result<Vec<()>> {
+        self.ctx.pop_all_guards().await
     }
 }
 
@@ -272,7 +266,8 @@ mod tests {
     use tempfile::{tempdir, NamedTempFile};
     use test_utilities::docker;
 
-    use crate::protocol::RunResponse;
+    use crate::middles::Middle;
+    use crate::protocol::{RunRequest, RunResponse};
 
     use super::*;
 

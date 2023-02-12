@@ -7,8 +7,8 @@ use std::sync::Arc;
 use celery::export::async_trait;
 use tokio::sync::Mutex;
 
-use crate::params::Param;
-use crate::protocol::{RunRequest, RunSpecification};
+use crate::middles::Middle;
+use crate::protocol::{RunResponse, RunSpecification};
 
 pub mod client_end;
 pub mod server_end;
@@ -25,17 +25,51 @@ where
 }
 
 #[async_trait]
-pub trait GuardStackData<P>: Sized + Send + Sync
+pub trait InvokeMiddle<PA, PB>: Send + Sync
 where
-    P: Send + Sync,
+    PA: Send + Sync,
+    PB: Send + Sync,
 {
-    fn pass_env(&mut self, key: String, val: &P);
+    async fn push_guard(&self, param: PA, key: Option<String>) -> anyhow::Result<PB>;
+    async fn pop_all_guards(&self) -> anyhow::Result<Vec<()>>;
+}
+
+#[async_trait]
+impl<PA, PB, M> Middle<RunSpecification<PA>, RunResponse, RunSpecification<PB>, RunResponse> for M
+where
+    PA: Send + Sync + 'static,
+    PB: Send + Sync,
+    M: InvokeMiddle<PA, PB>,
+{
+    async fn transform_request(
+        &self,
+        request: RunSpecification<PA>,
+    ) -> anyhow::Result<RunSpecification<PB>> {
+        guard_run_args(request, |param, key| self.push_guard(param, key)).await
+    }
+
+    async fn transform_response(
+        &self,
+        response: anyhow::Result<RunResponse>,
+    ) -> anyhow::Result<RunResponse> {
+        self.pop_all_guards().await?;
+        response
+    }
+}
+
+#[async_trait]
+pub trait GuardStackData<PA, PB>: Sized + Send + Sync
+where
+    PA: Send + Sync + 'static,
+    PB: Send + Sync,
+{
+    fn pass_env(&mut self, key: String, val: &PB);
 
     async fn push_guard(
         data: &ArcMtxRefCell<Self>,
-        arg: Param,
+        arg: PA,
         key: Option<String>,
-    ) -> anyhow::Result<P> {
+    ) -> anyhow::Result<PB> {
         let param = {
             let guard = {
                 let data = data.lock().await;
@@ -56,20 +90,21 @@ where
         Ok(param)
     }
 
-    fn guard_param(&self, param: Param) -> Box<dyn ArgGuard<P, Self>>;
+    fn guard_param(&self, param: PA) -> Box<dyn ArgGuard<PB, Self>>;
 
-    fn guards(&self) -> &Vec<Box<dyn ArgGuard<P, Self>>>;
+    fn guards(&self) -> &Vec<Box<dyn ArgGuard<PB, Self>>>;
 
-    fn guards_mut(&mut self) -> &mut Vec<Box<dyn ArgGuard<P, Self>>>;
+    fn guards_mut(&mut self) -> &mut Vec<Box<dyn ArgGuard<PB, Self>>>;
 }
 
 #[async_trait]
-pub trait GuardStack<P, D>: Send + Sync
+pub trait GuardStack<PA, PB, D>: Send + Sync
 where
-    P: Send + Sync,
-    D: GuardStackData<P>,
+    PA: Send + Sync + 'static,
+    PB: Send + Sync,
+    D: GuardStackData<PA, PB>,
 {
-    async fn push_guard(&self, arg: Param, key: Option<String>) -> anyhow::Result<P> {
+    async fn push_guard(&self, arg: PA, key: Option<String>) -> anyhow::Result<PB> {
         GuardStackData::push_guard(self.data(), arg, key).await
     }
 
@@ -81,7 +116,7 @@ where
             .collect()
     }
 
-    async fn guards(&self) -> Vec<Box<dyn ArgGuard<P, D>>> {
+    async fn guards(&self) -> Vec<Box<dyn ArgGuard<PB, D>>> {
         let data = self.data().lock().await;
         let mut data = data.borrow_mut();
         let guards = data.guards_mut();
@@ -95,13 +130,14 @@ where
     fn data(&self) -> &ArcMtxRefCell<D>;
 }
 
-pub async fn guard_hashmap_args<P, F, Fut>(
-    args: &HashMap<String, Param>,
+pub async fn guard_hashmap_args<PA, PB, F, Fut>(
+    args: &HashMap<String, PA>,
     fn_guard: F,
-) -> anyhow::Result<HashMap<String, P>>
+) -> anyhow::Result<HashMap<String, PB>>
 where
-    F: FnMut(Param) -> Fut,
-    Fut: Future<Output = anyhow::Result<P>>,
+    PA: Clone,
+    F: FnMut(PA) -> Fut,
+    Fut: Future<Output = anyhow::Result<PB>>,
 {
     let args = args
         .keys()
@@ -118,13 +154,13 @@ where
     Ok(args)
 }
 
-pub async fn guard_run_args<P, F, Fut>(
-    run_request: RunRequest,
+async fn guard_run_args<PA, PB, F, Fut>(
+    run_request: RunSpecification<PA>,
     mut fn_guard: F,
-) -> anyhow::Result<RunSpecification<P>>
+) -> anyhow::Result<RunSpecification<PB>>
 where
-    F: FnMut(Param, Option<String>) -> Fut,
-    Fut: Future<Output = anyhow::Result<P>>,
+    F: FnMut(PA, Option<String>) -> Fut,
+    Fut: Future<Output = anyhow::Result<PB>>,
 {
     let cwd = run_request.cwd;
     let env = if let Some(env) = run_request.env {
@@ -158,7 +194,7 @@ where
     let stderr = has_stderr.and_then(|_| wrapped_args.pop_front());
     let args = wrapped_args.into_iter().collect();
 
-    Ok(RunSpecification::<P> {
+    Ok(RunSpecification::<PB> {
         command,
         args,
         cwd,
@@ -177,7 +213,8 @@ mod tests {
     use test_utilities::docker;
 
     use crate::middles::invoke::server_end::Config;
-    use crate::middles::Middle;
+    use crate::params::Param;
+    use crate::protocol::RunRequest;
 
     use super::*;
 

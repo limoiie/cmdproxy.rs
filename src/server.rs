@@ -7,7 +7,7 @@ use tempfile::tempdir;
 use crate::apply_middles;
 use crate::configs::CmdProxyServerConf;
 use crate::middles::{invoke, serde, Middle};
-use crate::protocol::RunRecipe;
+use crate::protocol::{RunRecipe, RunResponse};
 
 pub struct Server {
     conf: CmdProxyServerConf,
@@ -44,9 +44,13 @@ impl Server {
                 .current_dir(run_spec.cwd.unwrap_or_else(|| ".".to_owned()))
                 .envs(run_spec.env.unwrap_or_default())
                 .status();
-            let ret_code = st?.code().unwrap_or(0);
-            debug!("  returned with code {ret_code}");
-            Ok(ret_code)
+
+            let return_code = st?.code().unwrap_or(0);
+            debug!("  returned with code {return_code}");
+            Ok(RunResponse {
+                return_code,
+                exc: None,
+            })
         };
 
         let conf = invoke::server_end::Config {

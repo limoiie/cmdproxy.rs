@@ -13,11 +13,9 @@ use tempfile::{TempDir, TempPath};
 use tokio::sync::Mutex;
 
 use crate::middles::invoke::{
-    guard_hashmap_args, guard_run_args, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData,
+    guard_hashmap_args, ArcMtxRefCell, ArgGuard, GuardStack, GuardStackData, InvokeMiddle,
 };
-use crate::middles::Middle;
 use crate::params::Param;
-use crate::protocol::{RunRecipe, RunRequest, RunResponse};
 
 struct Data {
     bucket: GridFSBucket,
@@ -27,7 +25,7 @@ struct Data {
     passed_env: HashMap<String, String>,
 }
 
-impl GuardStackData<String> for Data {
+impl GuardStackData<Param, String> for Data {
     fn pass_env(&mut self, key: String, val: &String) {
         self.passed_env.insert(key, val.clone());
     }
@@ -216,7 +214,7 @@ struct ContextStack {
 }
 
 #[async_trait]
-impl GuardStack<String, Data> for ContextStack {
+impl GuardStack<Param, String, Data> for ContextStack {
     fn data(&self) -> &ArcMtxRefCell<Data> {
         &self.data
     }
@@ -248,20 +246,13 @@ impl MiddleImpl {
 }
 
 #[async_trait]
-impl Middle<RunRequest, RunResponse, RunRecipe, i32> for MiddleImpl {
-    async fn transform_request(&self, run_request: RunRequest) -> anyhow::Result<RunRecipe> {
-        guard_run_args(run_request, |param, key| self.ctx.push_guard(param, key)).await
+impl InvokeMiddle<Param, String> for MiddleImpl {
+    async fn push_guard(&self, param: Param, key: Option<String>) -> anyhow::Result<String> {
+        self.ctx.push_guard(param, key).await
     }
 
-    async fn transform_response(
-        &self,
-        response: anyhow::Result<i32>,
-    ) -> anyhow::Result<RunResponse> {
-        self.ctx.pop_all_guards().await?;
-        Ok(RunResponse {
-            return_code: response?,
-            exc: None,
-        })
+    async fn pop_all_guards(&self) -> anyhow::Result<Vec<()>> {
+        self.ctx.pop_all_guards().await
     }
 }
 
@@ -274,6 +265,9 @@ mod tests {
     use fake::Fake;
     use tempfile::{tempdir, NamedTempFile};
     use test_utilities::docker;
+
+    use crate::middles::Middle;
+    use crate::protocol::{RunRequest, RunResponse};
 
     use super::*;
 
@@ -406,7 +400,10 @@ mod tests {
             .unwrap();
             std::fs::write(run_spec.stderr.unwrap().as_str(), "").unwrap();
 
-            let run_response = 0;
+            let run_response = RunResponse {
+                return_code: 0,
+                exc: None,
+            };
             invoke_middle
                 .transform_response(Ok(run_response))
                 .await
