@@ -1,6 +1,6 @@
 [package]
 name = "cmdproxy"
-version = "0.0.3-dev6-g861e3bc"
+version = "0.0.3"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
