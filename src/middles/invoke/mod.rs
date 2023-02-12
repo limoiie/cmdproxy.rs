@@ -169,3 +169,59 @@ where
 }
 
 pub type ArcMtxRefCell<T> = Arc<Mutex<RefCell<T>>>;
+
+#[cfg(test)]
+mod tests {
+    use chain_ext::mongodb_gridfs::DatabaseExt;
+    use tempfile::tempdir;
+    use test_utilities::docker;
+
+    use crate::middles::invoke::server_end::Config;
+    use crate::middles::Middle;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_guard_run_args_resolve_passed_env() {
+        let container = docker::Builder::new("mongo")
+            .name("cmdproxy-test-guard_run_args")
+            .bind_port_as_default(Some("0"), "27017")
+            .build_disposable()
+            .await;
+
+        let bucket = mongodb::Client::with_uri_str(container.url())
+            .await
+            .unwrap()
+            .database("cmdproxy-test-db")
+            .bucket(None);
+
+        let fake_password = "fake password";
+        let conf = Config {
+            command_palette: HashMap::<String, String>::new(),
+        };
+
+        let req = RunRequest::builder()
+            .command(Param::str("/bin/sh"))
+            .args(vec![Param::env("PASSWORD")])
+            .stdout(Param::env("PASSWORD"))
+            .stderr(Param::format(
+                "{pwd}",
+                HashMap::from([("pwd", Param::env("PASSWORD"))]),
+            ))
+            .env(HashMap::from([(
+                "PASSWORD".to_owned(),
+                Param::str(fake_password),
+            )]))
+            .build();
+
+        let server_tempdir = tempdir().unwrap();
+        let middle = server_end::MiddleImpl::new(bucket.clone(), server_tempdir, conf);
+        let spec = middle.transform_request(req).await;
+
+        assert!(spec.is_ok());
+        let spec = spec.unwrap();
+        assert_eq!(spec.args, vec![fake_password.to_owned()]);
+        assert_eq!(spec.stdout, Some(fake_password.to_owned()));
+        assert_eq!(spec.stderr, Some(fake_password.to_owned()));
+    }
+}
