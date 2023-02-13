@@ -3,7 +3,7 @@ replace-with = "vendored-sources"
 
 [source."https://github.com/limoiie/chain-ext.rs"]
 git = "https://github.com/limoiie/chain-ext.rs"
-tag = "v0.2.1"
+tag = "v0.2.2"
 replace-with = "vendored-sources"
 
 [source."https://github.com/limoiie/mongodb-gridfs-ext.rs"]
@@ -18,7 +18,7 @@ replace-with = "vendored-sources"
 
 [source."https://github.com/limoiie/test-utilities.rs"]
 git = "https://github.com/limoiie/test-utilities.rs"
-tag = "v0.1.2"
+tag = "v0.1.3"
 replace-with = "vendored-sources"
 
 [source.vendored-sources]

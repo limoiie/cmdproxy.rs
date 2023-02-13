@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 anyhow = "1.0"
 celery = { git = "https://github.com/limoiie/rusty-celery", tag = "v0.4.0-rcn.12.2" }
-chain_ext = { git = "https://github.com/limoiie/chain-ext.rs", tag = "v0.2.1" }
+chain_ext = { git = "https://github.com/limoiie/chain-ext.rs", tag = "v0.2.2" }
 clap = { version = "4.0.10", features = ["derive"] }
 chrono = "0.4.22"
 directories = "4.0.1"
@@ -18,7 +18,7 @@ hostname = "0.3.1"
 lazy_static = "1.4.0"
 log = "0.4.17"
 mongodb = { version = "2.3.1", features = ["tokio-sync"] }
-mongodb-gridfs = "0.2.3"
+mongodb-gridfs = { git = "https://github.com/limoiie/mongodb-gridfs-rs", tag = "v0.2.3-patched" }
 mongodb-gridfs-ext = { git = "https://github.com/limoiie/mongodb-gridfs-ext.rs", tag = "v0.1.6" }
 once_cell = "1.15.0"
 regex = "1.6.0"
@@ -36,4 +36,4 @@ zip = "0.6.3"
 fake = "2.5.0"
 folder_compare = "0.4.0"
 rand = "0.8.5"
-test-utilities = { git = "https://github.com/limoiie/test-utilities.rs", tag = "v0.1.2" }
+test-utilities = { git = "https://github.com/limoiie/test-utilities.rs", tag = "v0.1.3" }
