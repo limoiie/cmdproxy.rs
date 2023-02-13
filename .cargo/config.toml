@@ -11,6 +11,11 @@ git = "https://github.com/limoiie/mongodb-gridfs-ext.rs"
 tag = "v0.1.6"
 replace-with = "vendored-sources"
 
+[source."git+https://github.com/limoiie/mongodb-gridfs-rs?tag=v0.2.3-patched"]
+git = "https://github.com/limoiie/mongodb-gridfs-rs"
+tag = "v0.2.3-patched"
+replace-with = "vendored-sources"
+
 [source."https://github.com/limoiie/rusty-celery"]
 git = "https://github.com/limoiie/rusty-celery"
 tag = "v0.4.0-rcn.12.2"
